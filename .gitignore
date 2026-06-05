@@ -1,0 +1,13 @@
+# Build output
+build/
+
+# Compiled objects
+*.o
+*.a
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
