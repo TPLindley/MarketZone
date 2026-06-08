@@ -1,12 +1,385 @@
 #include <gtkmm.h>
+#include <pangomm.h>
+#include <vector>
+#include <string>
+#include <mutex>
+#include <thread>
+#include <fstream>
+#include <filesystem>
+#include <functional>
+#include "json.hpp"
+#include "httplib.h"
 
+using json = nlohmann::json;
+
+// --- API port ---
+static const int API_PORT = 8765;
+
+// --- Scroll speed ---
+static const double SCROLL_SPEED = 40.0;
+
+// -----------------------------------------------------------------------
+// Special entry
+// -----------------------------------------------------------------------
+struct Special {
+    std::string text;
+    std::string color_hex; // e.g. "#FFFFFF"
+
+    Special() : text(""), color_hex("#FFFFFF") {}
+    explicit Special(const std::string& t, const std::string& c = "#FFFFFF")
+        : text(t), color_hex(c) {}
+
+    Gdk::RGBA rgba() const {
+        Gdk::RGBA c;
+        if (!c.set(color_hex))
+            c.set_rgba(1.0, 1.0, 1.0, 1.0);
+        return c;
+    }
+};
+
+// -----------------------------------------------------------------------
+// Persistence
+// -----------------------------------------------------------------------
+static std::string data_file_path()
+{
+    std::string dir = std::string(g_get_user_data_dir()) + "/szSpecials";
+    std::filesystem::create_directories(dir);
+    return dir + "/specials.json";
+}
+
+static std::vector<Special> default_specials()
+{
+    std::vector<Special> v;
+    for (int i = 1; i <= 15; ++i)
+        v.emplace_back("Special " + std::to_string(i));
+    return v;
+}
+
+static void save_specials(const std::vector<Special>& specials)
+{
+    json arr = json::array();
+    for (const auto& s : specials)
+        arr.push_back({{"text", s.text}, {"color", s.color_hex}});
+    std::ofstream f(data_file_path());
+    f << arr.dump(2);
+}
+
+static std::vector<Special> load_specials()
+{
+    std::string path = data_file_path();
+    std::ifstream f(path);
+    if (!f.is_open())
+        return default_specials();
+    try {
+        json arr = json::parse(f);
+        std::vector<Special> v;
+        for (const auto& item : arr) {
+            std::string text  = item.value("text", "");
+            std::string color = item.value("color", "#FFFFFF");
+            if (!text.empty())
+                v.emplace_back(text, color);
+        }
+        return v.empty() ? default_specials() : v;
+    } catch (...) {
+        return default_specials();
+    }
+}
+
+// -----------------------------------------------------------------------
+// Scroll state
+// -----------------------------------------------------------------------
+struct ScrollState {
+    Gtk::Box* content_box = nullptr;
+    double    offset      = 0.0;
+    gint64    last_time   = 0;
+    bool      needs_scroll = false;
+    int       half_h      = 0;
+    int       viewport_h  = 0;
+};
+
+static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
+                           ScrollState* state,
+                           Gtk::Viewport* viewport)
+{
+    if (!state->needs_scroll)
+        return true;
+
+    gint64 now = clock->get_frame_time();
+    if (state->last_time != 0) {
+        double dt = (now - state->last_time) / 1e6;
+        state->offset += SCROLL_SPEED * dt;
+        if (state->half_h > 0 && state->offset >= state->half_h)
+            state->offset -= state->half_h;
+        viewport->get_vadjustment()->set_value(static_cast<int>(state->offset));
+    }
+    state->last_time = now;
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// UI helpers
+// -----------------------------------------------------------------------
+static Gdk::RGBA g_black;
+
+static Gtk::Label* make_special_label(const Special& s, const Pango::FontDescription& font)
+{
+    auto* label = Gtk::manage(new Gtk::Label(s.text));
+    label->override_color(s.rgba());
+    label->override_background_color(g_black);
+    label->override_font(font);
+    label->set_halign(Gtk::ALIGN_CENTER);
+    label->set_valign(Gtk::ALIGN_CENTER);
+    return label;
+}
+
+static void add_separator(Gtk::Box* box)
+{
+    auto* sep_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    sep_box->override_background_color(g_black);
+    sep_box->set_halign(Gtk::ALIGN_CENTER);
+    sep_box->set_margin_top(12);
+    sep_box->set_margin_bottom(12);
+
+    auto make_rule = [&]() {
+        auto* rule = Gtk::manage(new Gtk::DrawingArea());
+        rule->override_background_color(g_black);
+        rule->set_size_request(200, 2);
+        rule->signal_draw().connect([](const Cairo::RefPtr<Cairo::Context>& cr) {
+            cr->set_source_rgb(1.0, 0.08, 0.58);
+            cr->set_line_width(2);
+            cr->move_to(0, 1);
+            cr->line_to(200, 1);
+            cr->stroke();
+            return false;
+        });
+        return rule;
+    };
+
+    auto* sep_label = Gtk::manage(new Gtk::Label());
+    sep_label->set_markup("<span font_family='Z003' style='italic' size='28000' color='#FF1595'>✦ ❧ ✦</span>");
+    sep_label->override_background_color(g_black);
+
+    sep_box->pack_start(*make_rule(), false, false, 0);
+    sep_box->pack_start(*sep_label, false, false, 0);
+    sep_box->pack_start(*make_rule(), false, false, 0);
+    box->pack_start(*sep_box, false, false, 0);
+}
+
+static void populate_content_box(Gtk::Box* box,
+                                 const std::vector<Special>& specials,
+                                 const Pango::FontDescription& font)
+{
+    // Remove existing children
+    for (auto* child : box->get_children())
+        box->remove(*child);
+
+    // First copy
+    for (const auto& s : specials)
+        box->pack_start(*make_special_label(s, font), false, false, 6);
+
+    // Separator
+    add_separator(box);
+
+    // Duplicate copy for seamless loop
+    for (const auto& s : specials)
+        box->pack_start(*make_special_label(s, font), false, false, 6);
+
+    box->show_all();
+}
+
+// -----------------------------------------------------------------------
+// Global mutable state (protected by mutex)
+// -----------------------------------------------------------------------
+static std::mutex          g_mutex;
+static std::vector<Special> g_specials;
+
+// GTK widget pointers set during main (only touched on GTK thread)
+static Gtk::Box*           g_content_box = nullptr;
+static ScrollState*        g_state       = nullptr;
+static Pango::FontDescription* g_item_font = nullptr;
+
+// Schedule a UI rebuild on the GTK main thread
+static void schedule_rebuild()
+{
+    Glib::signal_idle().connect_once([]() {
+        std::vector<Special> snap;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            snap = g_specials;
+        }
+        populate_content_box(g_content_box, snap, *g_item_font);
+        // Reset scroll
+        if (g_state) {
+            g_state->offset     = 0.0;
+            g_state->last_time  = 0;
+            g_state->needs_scroll = false;
+            g_state->half_h     = 0;
+        }
+    });
+}
+
+// -----------------------------------------------------------------------
+// HTTP API server (runs in a background thread)
+// -----------------------------------------------------------------------
+static void run_api_server()
+{
+    httplib::Server svr;
+
+    // GET /specials — return current list
+    svr.Get("/specials", [](const httplib::Request&, httplib::Response& res) {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        json arr = json::array();
+        for (const auto& s : g_specials)
+            arr.push_back({{"text", s.text}, {"color", s.color_hex}});
+        res.set_content(arr.dump(2), "application/json");
+    });
+
+    // DELETE /specials — clear the list
+    svr.Delete("/specials", [](const httplib::Request&, httplib::Response& res) {
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            g_specials.clear();
+        }
+        save_specials({});
+        schedule_rebuild();
+        res.set_content("{\"status\":\"cleared\"}", "application/json");
+    });
+
+    // POST /specials — replace the list
+    // Body: [{"text":"...", "color":"#RRGGBB"}, ...]
+    svr.Post("/specials", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json arr = json::parse(req.body);
+            std::vector<Special> newlist;
+            for (const auto& item : arr) {
+                std::string text  = item.value("text", "");
+                std::string color = item.value("color", "#FFFFFF");
+                if (!text.empty())
+                    newlist.emplace_back(text, color);
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                g_specials = newlist;
+            }
+            save_specials(newlist);
+            schedule_rebuild();
+            res.set_content("{\"status\":\"ok\",\"count\":" +
+                            std::to_string(newlist.size()) + "}", "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+        }
+    });
+
+    svr.listen("0.0.0.0", API_PORT);
+}
+
+// -----------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
     auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.szSpecials");
 
+    // Load persisted list
+    {
+        auto loaded = load_specials();
+        std::lock_guard<std::mutex> lk(g_mutex);
+        g_specials = loaded;
+    }
+
+    g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
+
+    // Font for specials
+    Pango::FontDescription item_font;
+    item_font.set_size(48 * PANGO_SCALE);
+    g_item_font = &item_font;
+
     Gtk::Window window;
     window.set_title("szSpecials");
-    window.set_default_size(800, 600);
+    window.fullscreen();
+    window.override_background_color(g_black);
 
-    return app->run(window);
+    Gtk::Box main_box(Gtk::ORIENTATION_VERTICAL, 0);
+    window.add(main_box);
+
+    // --- Header ---
+    Gtk::EventBox header_eb;
+    header_eb.override_background_color(g_black);
+
+    Gtk::Label header_label;
+    header_label.set_markup(
+        "<span font_family='URW Bookman' style='italic' weight='demibold' "
+        "size='126000' color='#FF1595'>Rolling Pin Bakery</span>");
+    header_label.set_halign(Gtk::ALIGN_CENTER);
+    header_label.set_valign(Gtk::ALIGN_CENTER);
+
+    auto header_css = Gtk::CssProvider::create();
+    header_css->load_from_data("label { color: #FF1595; background-color: transparent; }");
+    header_label.get_style_context()->add_provider(
+        header_css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+
+    header_eb.add(header_label);
+    main_box.pack_start(header_eb, false, false, 0);
+
+    // --- Scrolling area ---
+    Gtk::ScrolledWindow scrolled;
+    scrolled.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    scrolled.override_background_color(g_black);
+
+    auto scroll_css = Gtk::CssProvider::create();
+    scroll_css->load_from_data("scrollbar { min-width:0; min-height:0; opacity:0; }"
+                               "scrolledwindow > * { background-color: black; }");
+    Gtk::StyleContext::add_provider_for_screen(
+        Gdk::Screen::get_default(), scroll_css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    Gtk::Viewport* viewport = Gtk::manage(new Gtk::Viewport(
+        Glib::RefPtr<Gtk::Adjustment>(), Glib::RefPtr<Gtk::Adjustment>()));
+    viewport->override_background_color(g_black);
+    scrolled.add(*viewport);
+
+    Gtk::Box* content_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    content_box->override_background_color(g_black);
+    viewport->add(*content_box);
+    g_content_box = content_box;
+
+    // Populate initial list
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        populate_content_box(content_box, g_specials, item_font);
+    }
+
+    main_box.pack_start(scrolled, true, true, 0);
+
+    ScrollState* state = new ScrollState();
+    state->content_box = content_box;
+    g_state = state;
+
+    window.signal_realize().connect([&]() {
+        int h = window.get_screen()->get_height();
+        header_eb.set_size_request(-1, h / 10);
+    });
+
+    scrolled.signal_size_allocate().connect([state, &scrolled](Gtk::Allocation&) {
+        int total_h = state->content_box->get_allocated_height();
+        int view_h  = scrolled.get_allocated_height();
+        if (total_h > 0 && view_h > 0) {
+            state->half_h       = total_h / 2;
+            state->viewport_h   = view_h;
+            state->needs_scroll = state->half_h > view_h;
+        }
+    });
+
+    scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {
+        return on_scroll_tick(clock, state, viewport);
+    });
+
+    // Start API server in background thread
+    std::thread api_thread(run_api_server);
+    api_thread.detach();
+
+    window.show_all();
+    int ret = app->run(window);
+    delete state;
+    return ret;
 }

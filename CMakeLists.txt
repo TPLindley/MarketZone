@@ -6,9 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-3.0)
+find_package(Threads REQUIRED)
 
 add_executable(szSpecials src/main.cpp)
 
-target_include_directories(szSpecials PRIVATE ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(szSpecials PRIVATE ${GTKMM_LIBRARIES})
+target_include_directories(szSpecials PRIVATE
+    ${GTKMM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(szSpecials PRIVATE
+    ${GTKMM_LIBRARIES}
+    Threads::Threads)
 target_compile_options(szSpecials PRIVATE ${GTKMM_CFLAGS_OTHER})
