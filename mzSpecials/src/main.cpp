@@ -48,6 +48,34 @@ static std::string data_file_path()
     return dir + "/specials.json";
 }
 
+static std::string header_file_path()
+{
+    std::string dir = std::string(g_get_user_data_dir()) + "/mzSpecials";
+    std::filesystem::create_directories(dir);
+    return dir + "/header.json";
+}
+
+static const std::string DEFAULT_HEADER_TEXT = "Rolling Pin Bakery";
+
+static void save_header(const std::string& text)
+{
+    json obj = {{"text", text}};
+    std::ofstream f(header_file_path());
+    f << obj.dump(2);
+}
+
+static std::string load_header()
+{
+    std::ifstream f(header_file_path());
+    if (!f.is_open()) return DEFAULT_HEADER_TEXT;
+    try {
+        json obj = json::parse(f);
+        return obj.value("text", DEFAULT_HEADER_TEXT);
+    } catch (...) {
+        return DEFAULT_HEADER_TEXT;
+    }
+}
+
 static std::vector<Special> default_specials()
 {
     std::vector<Special> v;
@@ -240,6 +268,30 @@ static std::vector<Special> g_specials;
 static Gtk::Box*           g_content_box = nullptr;
 static ScrollState*        g_state       = nullptr;
 static Pango::FontDescription* g_item_font = nullptr;
+static Gtk::Label*         g_header_label = nullptr;
+static std::string         g_header_text;
+
+// Schedule a header text update on the GTK main thread
+static void schedule_header_update()
+{
+    Glib::signal_idle().connect_once([]() {
+        std::string text;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            text = g_header_text;
+        }
+        if (g_header_label) {
+            // Escape for Pango markup
+            gchar* escaped = g_markup_escape_text(text.c_str(), -1);
+            std::string markup =
+                std::string("<span font_family='URW Bookman' style='italic' "
+                            "weight='demibold' size='126000' color='#FF1595'>") +
+                escaped + "</span>";
+            g_free(escaped);
+            g_header_label->set_markup(markup);
+        }
+    });
+}
 
 // Schedule a UI rebuild on the GTK main thread
 static void schedule_rebuild()
@@ -268,6 +320,37 @@ static void schedule_rebuild()
 static void run_api_server()
 {
     httplib::Server svr;
+
+    // GET /header — return current header text
+    svr.Get("/header", [](const httplib::Request&, httplib::Response& res) {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        json obj = {{"text", g_header_text}};
+        res.set_content(obj.dump(2), "application/json");
+    });
+
+    // POST /header — set header text
+    // Body: {"text": "My Bakery"}
+    svr.Post("/header", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json obj = json::parse(req.body);
+            std::string text = obj.value("text", "");
+            if (text.empty()) {
+                res.status = 400;
+                res.set_content("{\"error\":\"text field required\"}", "application/json");
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                g_header_text = text;
+            }
+            save_header(text);
+            schedule_header_update();
+            res.set_content("{\"status\":\"ok\"}", "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(std::string("{\"error\":\"")+e.what()+"\"}", "application/json");
+        }
+    });
 
     // GET /specials — return current list
     svr.Get("/specials", [](const httplib::Request&, httplib::Response& res) {
@@ -330,6 +413,7 @@ int main(int argc, char* argv[])
         auto loaded = load_specials();
         std::lock_guard<std::mutex> lk(g_mutex);
         g_specials = loaded;
+        g_header_text = load_header();
     }
 
     g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
@@ -352,9 +436,16 @@ int main(int argc, char* argv[])
     header_eb.override_background_color(g_black);
 
     Gtk::Label header_label;
-    header_label.set_markup(
-        "<span font_family='URW Bookman' style='italic' weight='demibold' "
-        "size='126000' color='#FF1595'>Rolling Pin Bakery</span>");
+    {
+        gchar* escaped = g_markup_escape_text(g_header_text.c_str(), -1);
+        std::string markup =
+            std::string("<span font_family='URW Bookman' style='italic' "
+                        "weight='demibold' size='126000' color='#FF1595'>") +
+            escaped + "</span>";
+        g_free(escaped);
+        header_label.set_markup(markup);
+    }
+    g_header_label = &header_label;
     header_label.set_halign(Gtk::ALIGN_CENTER);
     header_label.set_valign(Gtk::ALIGN_CENTER);
 
