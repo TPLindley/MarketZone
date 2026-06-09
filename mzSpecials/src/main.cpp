@@ -199,6 +199,25 @@ static void add_separator(Gtk::Box* box)
     sep_box->set_margin_top(10);
     sep_box->set_margin_bottom(10);
 
+    // Helper: creates a pink horizontal rule that fills its allocated width,
+    // vertically centred within display_h pixels.
+    auto make_pink_line = [display_h]() {
+        auto* line = Gtk::manage(new Gtk::DrawingArea());
+        line->override_background_color(Gdk::RGBA("black"));
+        line->set_size_request(1, display_h);  // width expands via pack_start expand
+        line->signal_draw().connect([line, display_h](const Cairo::RefPtr<Cairo::Context>& cr) {
+            int w = line->get_allocated_width();
+            double y = display_h / 2.0;
+            cr->set_source_rgb(1.0, 0.082, 0.576);  // #FF1595 pink
+            cr->set_line_width(3);
+            cr->move_to(0, y);
+            cr->line_to(w, y);
+            cr->stroke();
+            return false;
+        });
+        return line;
+    };
+
     if (rsvg_handle && svg_w > 0) {
         auto* da = Gtk::manage(new Gtk::DrawingArea());
         da->override_background_color(g_black);
@@ -219,7 +238,11 @@ static void add_separator(Gtk::Box* box)
                 rsvg_handle_render_document(rsvg_handle.get(), cr->cobj(), &viewport, nullptr);
                 return false;
             });
+
+        sep_box->set_halign(Gtk::ALIGN_FILL);
+        sep_box->pack_start(*make_pink_line(), true, true, 8);
         sep_box->pack_start(*da, false, false, 0);
+        sep_box->pack_start(*make_pink_line(), true, true, 8);
     } else {
         // Fallback: pink rule if SVG can't load
         auto* rule = Gtk::manage(new Gtk::DrawingArea());
