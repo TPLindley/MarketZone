@@ -1,19 +1,25 @@
 cmake_minimum_required(VERSION 3.16)
-project(szSpecials VERSION 0.1.0 LANGUAGES CXX)
+project(mzSpecials VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-3.0)
+pkg_check_modules(RSVG REQUIRED librsvg-2.0)
 find_package(Threads REQUIRED)
 
-add_executable(szSpecials src/main.cpp)
+add_executable(mzSpecials src/main.cpp)
 
-target_include_directories(szSpecials PRIVATE
+target_include_directories(mzSpecials PRIVATE
     ${GTKMM_INCLUDE_DIRS}
+    ${RSVG_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(szSpecials PRIVATE
+target_link_libraries(mzSpecials PRIVATE
     ${GTKMM_LIBRARIES}
+    ${RSVG_LIBRARIES}
     Threads::Threads)
-target_compile_options(szSpecials PRIVATE ${GTKMM_CFLAGS_OTHER})
+target_compile_options(mzSpecials PRIVATE ${GTKMM_CFLAGS_OTHER} ${RSVG_CFLAGS_OTHER})
+
+# Copy assets next to the executable
+file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})

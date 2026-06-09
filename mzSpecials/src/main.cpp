@@ -1,5 +1,6 @@
 #include <gtkmm.h>
 #include <pangomm.h>
+#include <librsvg/rsvg.h>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -42,7 +43,7 @@ struct Special {
 // -----------------------------------------------------------------------
 static std::string data_file_path()
 {
-    std::string dir = std::string(g_get_user_data_dir()) + "/szSpecials";
+    std::string dir = std::string(g_get_user_data_dir()) + "/mzSpecials";
     std::filesystem::create_directories(dir);
     return dir + "/specials.json";
 }
@@ -93,6 +94,7 @@ struct ScrollState {
     double    offset      = 0.0;
     gint64    last_time   = 0;
     bool      needs_scroll = false;
+    bool      expanded    = false; // true once duplicate copy has been added
     int       half_h      = 0;
     int       viewport_h  = 0;
 };
@@ -134,34 +136,72 @@ static Gtk::Label* make_special_label(const Special& s, const Pango::FontDescrip
 
 static void add_separator(Gtk::Box* box)
 {
-    auto* sep_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    // Render rpbs.svg using librsvg via a DrawingArea
+    // SVG is tiny (25.4mm x 3.06mm) — scale it up to a reasonable display size
+    const std::string svg_path =
+        std::filesystem::canonical("/proc/self/exe").parent_path().string()
+        + "/assets/rpbs.svg";
+
+    // Load once, keep a shared_ptr for the draw callback
+    auto rsvg_handle = std::shared_ptr<RsvgHandle>(
+        rsvg_handle_new_from_file(svg_path.c_str(), nullptr),
+        [](RsvgHandle* h){ if (h) g_object_unref(h); });
+
+    // Target display height in pixels; width scales proportionally
+    const int display_h = 60;
+    double svg_w = 0, svg_h = 0;
+    if (rsvg_handle) {
+        double out_w = 0, out_h = 0;
+        if (rsvg_handle_get_intrinsic_size_in_pixels(rsvg_handle.get(), &out_w, &out_h)
+            && out_h > 0) {
+            svg_w = out_w * (static_cast<double>(display_h) / out_h);
+            svg_h = display_h;
+        }
+    }
+
+    auto* sep_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     sep_box->override_background_color(g_black);
     sep_box->set_halign(Gtk::ALIGN_CENTER);
-    sep_box->set_margin_top(12);
-    sep_box->set_margin_bottom(12);
+    sep_box->set_margin_top(10);
+    sep_box->set_margin_bottom(10);
 
-    auto make_rule = [&]() {
+    if (rsvg_handle && svg_w > 0) {
+        auto* da = Gtk::manage(new Gtk::DrawingArea());
+        da->override_background_color(g_black);
+        da->set_size_request(static_cast<int>(svg_w), display_h);
+
+        // Capture shared_ptr so handle stays alive with the widget
+        da->signal_draw().connect(
+            [rsvg_handle, svg_w, svg_h](const Cairo::RefPtr<Cairo::Context>& cr) {
+                double out_w = 0, out_h = 0;
+                rsvg_handle_get_intrinsic_size_in_pixels(rsvg_handle.get(), &out_w, &out_h);
+                if (out_w > 0 && out_h > 0) {
+                    double sx = svg_w / out_w;
+                    double sy = svg_h / out_h;
+                    cr->scale(sx, sy);
+                }
+                RsvgRectangle viewport = { 0, 0, out_w > 0 ? out_w : svg_w,
+                                                  out_h > 0 ? out_h : svg_h };
+                rsvg_handle_render_document(rsvg_handle.get(), cr->cobj(), &viewport, nullptr);
+                return false;
+            });
+        sep_box->pack_start(*da, false, false, 0);
+    } else {
+        // Fallback: pink rule if SVG can't load
         auto* rule = Gtk::manage(new Gtk::DrawingArea());
         rule->override_background_color(g_black);
-        rule->set_size_request(200, 2);
+        rule->set_size_request(400, 2);
         rule->signal_draw().connect([](const Cairo::RefPtr<Cairo::Context>& cr) {
             cr->set_source_rgb(1.0, 0.08, 0.58);
             cr->set_line_width(2);
             cr->move_to(0, 1);
-            cr->line_to(200, 1);
+            cr->line_to(400, 1);
             cr->stroke();
             return false;
         });
-        return rule;
-    };
+        sep_box->pack_start(*rule, false, false, 0);
+    }
 
-    auto* sep_label = Gtk::manage(new Gtk::Label());
-    sep_label->set_markup("<span font_family='Z003' style='italic' size='28000' color='#FF1595'>✦ ❧ ✦</span>");
-    sep_label->override_background_color(g_black);
-
-    sep_box->pack_start(*make_rule(), false, false, 0);
-    sep_box->pack_start(*sep_label, false, false, 0);
-    sep_box->pack_start(*make_rule(), false, false, 0);
     box->pack_start(*sep_box, false, false, 0);
 }
 
@@ -173,17 +213,20 @@ static void populate_content_box(Gtk::Box* box,
     for (auto* child : box->get_children())
         box->remove(*child);
 
-    // First copy
+    // Single copy only — duplicate is added later if scrolling is needed
     for (const auto& s : specials)
         box->pack_start(*make_special_label(s, font), false, false, 6);
 
-    // Separator
+    box->show_all();
+}
+
+static void expand_for_scroll(Gtk::Box* box,
+                              const std::vector<Special>& specials,
+                              const Pango::FontDescription& font)
+{
     add_separator(box);
-
-    // Duplicate copy for seamless loop
     for (const auto& s : specials)
         box->pack_start(*make_special_label(s, font), false, false, 6);
-
     box->show_all();
 }
 
@@ -208,12 +251,13 @@ static void schedule_rebuild()
             snap = g_specials;
         }
         populate_content_box(g_content_box, snap, *g_item_font);
-        // Reset scroll
+        // Reset scroll state — size_allocate will re-evaluate if expansion is needed
         if (g_state) {
-            g_state->offset     = 0.0;
-            g_state->last_time  = 0;
+            g_state->offset      = 0.0;
+            g_state->last_time   = 0;
             g_state->needs_scroll = false;
-            g_state->half_h     = 0;
+            g_state->half_h      = 0;
+            g_state->expanded    = false;
         }
     });
 }
@@ -279,7 +323,7 @@ static void run_api_server()
 // -----------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.szSpecials");
+    auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.mzSpecials");
 
     // Load persisted list
     {
@@ -296,7 +340,7 @@ int main(int argc, char* argv[])
     g_item_font = &item_font;
 
     Gtk::Window window;
-    window.set_title("szSpecials");
+    window.set_title("mzSpecials");
     window.fullscreen();
     window.override_background_color(g_black);
 
@@ -361,13 +405,34 @@ int main(int argc, char* argv[])
     });
 
     scrolled.signal_size_allocate().connect([state, &scrolled](Gtk::Allocation&) {
-        int total_h = state->content_box->get_allocated_height();
-        int view_h  = scrolled.get_allocated_height();
-        if (total_h > 0 && view_h > 0) {
-            state->half_h       = total_h / 2;
-            state->viewport_h   = view_h;
-            state->needs_scroll = state->half_h > view_h;
+        int content_h = state->content_box->get_allocated_height();
+        int view_h    = scrolled.get_allocated_height();
+        if (content_h <= 0 || view_h <= 0)
+            return;
+
+        if (!state->expanded) {
+            if (content_h > view_h) {
+                // List overflows — add separator + duplicate for seamless loop
+                std::vector<Special> snap;
+                {
+                    std::lock_guard<std::mutex> lk(g_mutex);
+                    snap = g_specials;
+                }
+                expand_for_scroll(g_content_box, snap, *g_item_font);
+                state->expanded = true;
+            } else {
+                // Fits on screen — single copy, no scroll
+                state->needs_scroll = false;
+                state->half_h = 0;
+                return;
+            }
         }
+
+        // Re-measure after potential expansion
+        int total_h = state->content_box->get_allocated_height();
+        state->half_h       = total_h / 2;
+        state->viewport_h   = view_h;
+        state->needs_scroll = state->half_h > view_h;
     });
 
     scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {
