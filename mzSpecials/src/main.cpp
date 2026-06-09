@@ -55,24 +55,30 @@ static std::string header_file_path()
     return dir + "/header.json";
 }
 
-static const std::string DEFAULT_HEADER_TEXT = "Rolling Pin Bakery";
+static const std::string DEFAULT_HEADER_TEXT  = "Rolling Pin Bakery";
+static const std::string DEFAULT_HEADER_COLOR = "#FF1595";
 
-static void save_header(const std::string& text)
+static void save_header(const std::string& text, const std::string& color)
 {
-    json obj = {{"text", text}};
+    json obj = {{"text", text}, {"color", color}};
     std::ofstream f(header_file_path());
     f << obj.dump(2);
 }
 
-static std::string load_header()
+struct HeaderData { std::string text; std::string color; };
+
+static HeaderData load_header()
 {
     std::ifstream f(header_file_path());
-    if (!f.is_open()) return DEFAULT_HEADER_TEXT;
+    if (!f.is_open()) return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
     try {
         json obj = json::parse(f);
-        return obj.value("text", DEFAULT_HEADER_TEXT);
+        return {
+            obj.value("text",  DEFAULT_HEADER_TEXT),
+            obj.value("color", DEFAULT_HEADER_COLOR)
+        };
     } catch (...) {
-        return DEFAULT_HEADER_TEXT;
+        return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
     }
 }
 
@@ -270,24 +276,29 @@ static ScrollState*        g_state       = nullptr;
 static Pango::FontDescription* g_item_font = nullptr;
 static Gtk::Label*         g_header_label = nullptr;
 static std::string         g_header_text;
+static std::string         g_header_color = DEFAULT_HEADER_COLOR;
 
 // Schedule a header text update on the GTK main thread
 static void schedule_header_update()
 {
     Glib::signal_idle().connect_once([]() {
         std::string text;
+        std::string color;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
-            text = g_header_text;
+            text  = g_header_text;
+            color = g_header_color;
         }
         if (g_header_label) {
             // Escape for Pango markup
-            gchar* escaped = g_markup_escape_text(text.c_str(), -1);
+            gchar* escaped_text  = g_markup_escape_text(text.c_str(),  -1);
+            gchar* escaped_color = g_markup_escape_text(color.c_str(), -1);
             std::string markup =
                 std::string("<span font_family='URW Bookman' style='italic' "
-                            "weight='demibold' size='126000' color='#FF1595'>") +
-                escaped + "</span>";
-            g_free(escaped);
+                            "weight='demibold' size='126000' color='") +
+                escaped_color + "'>" + escaped_text + "</span>";
+            g_free(escaped_text);
+            g_free(escaped_color);
             g_header_label->set_markup(markup);
         }
     });
@@ -321,29 +332,31 @@ static void run_api_server()
 {
     httplib::Server svr;
 
-    // GET /header — return current header text
+    // GET /header — return current header text and color
     svr.Get("/header", [](const httplib::Request&, httplib::Response& res) {
         std::lock_guard<std::mutex> lk(g_mutex);
-        json obj = {{"text", g_header_text}};
+        json obj = {{"text", g_header_text}, {"color", g_header_color}};
         res.set_content(obj.dump(2), "application/json");
     });
 
-    // POST /header — set header text
-    // Body: {"text": "My Bakery"}
+    // POST /header — set header text and/or color
+    // Body: {"text": "My Bakery", "color": "#FF0000"}
     svr.Post("/header", [](const httplib::Request& req, httplib::Response& res) {
         try {
             json obj = json::parse(req.body);
-            std::string text = obj.value("text", "");
-            if (text.empty()) {
+            std::string text  = obj.value("text",  "");
+            std::string color = obj.value("color", "");
+            if (text.empty() && color.empty()) {
                 res.status = 400;
-                res.set_content("{\"error\":\"text field required\"}", "application/json");
+                res.set_content("{\"error\":\"text or color field required\"}", "application/json");
                 return;
             }
             {
                 std::lock_guard<std::mutex> lk(g_mutex);
-                g_header_text = text;
+                if (!text.empty())  g_header_text  = text;
+                if (!color.empty()) g_header_color = color;
             }
-            save_header(text);
+            save_header(g_header_text, g_header_color);
             schedule_header_update();
             res.set_content("{\"status\":\"ok\"}", "application/json");
         } catch (const std::exception& e) {
@@ -413,7 +426,9 @@ int main(int argc, char* argv[])
         auto loaded = load_specials();
         std::lock_guard<std::mutex> lk(g_mutex);
         g_specials = loaded;
-        g_header_text = load_header();
+        auto hdr = load_header();
+        g_header_text  = hdr.text;
+        g_header_color = hdr.color;
     }
 
     g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
