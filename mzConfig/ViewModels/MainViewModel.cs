@@ -10,12 +10,18 @@ namespace mzConfigure.ViewModels;
 public class MainViewModel : INotifyPropertyChanged
 {
     private readonly SpecialsApiService _apiService;
+    private readonly IDialogService _dialogService;
     private string _status = "Ready";
     private bool _isLoading;
     private string _raspberryPiUrl;
 
-    public MainViewModel()
+    public MainViewModel() : this(new DialogService())
     {
+    }
+
+    public MainViewModel(IDialogService dialogService)
+    {
+        _dialogService = dialogService;
         _apiService = new SpecialsApiService();
 
         // Load saved URL from preferences
@@ -91,7 +97,7 @@ public class MainViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             Status = $"Error: {ex.Message}";
-            await Application.Current!.MainPage!.DisplayAlert("Error", ex.Message, "OK");
+            await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
         finally
         {
@@ -101,11 +107,9 @@ public class MainViewModel : INotifyPropertyChanged
 
     private async Task ClearSpecials()
     {
-        var confirm = await Application.Current!.MainPage!.DisplayAlert(
+        var confirm = await _dialogService.ShowConfirmAsync(
             "Confirm", 
-            "Clear all specials from the display?", 
-            "Yes", 
-            "No");
+            "Clear all specials from the display?");
         
         if (!confirm)
             return;
@@ -122,7 +126,7 @@ public class MainViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             Status = $"Error: {ex.Message}";
-            await Application.Current!.MainPage!.DisplayAlert("Error", ex.Message, "OK");
+            await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
         finally
         {
@@ -134,7 +138,7 @@ public class MainViewModel : INotifyPropertyChanged
     {
         if (Specials.Count == 0)
         {
-            await Application.Current!.MainPage!.DisplayAlert("Info", "No specials to update", "OK");
+            await _dialogService.ShowAlertAsync("Info", "No specials to update");
             return;
         }
 
@@ -145,12 +149,12 @@ public class MainViewModel : INotifyPropertyChanged
         {
             var count = await _apiService.UpdateSpecialsAsync(Specials.ToList());
             Status = $"Updated {count} specials";
-            await Application.Current!.MainPage!.DisplayAlert("Success", $"Updated {count} specials", "OK");
+            await _dialogService.ShowAlertAsync("Success", $"Updated {count} specials");
         }
         catch (Exception ex)
         {
             Status = $"Error: {ex.Message}";
-            await Application.Current!.MainPage!.DisplayAlert("Error", ex.Message, "OK");
+            await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
         finally
         {
@@ -178,25 +182,25 @@ public class MainViewModel : INotifyPropertyChanged
     {
         IsLoading = true;
         Status = "Testing connection...";
-        
+
         try
         {
             var isConnected = await _apiService.TestConnectionAsync();
             if (isConnected)
             {
                 Status = "Connected successfully!";
-                await Application.Current!.MainPage!.DisplayAlert("Success", "Connected to Raspberry Pi", "OK");
+                await _dialogService.ShowAlertAsync("Success", "Connected to Raspberry Pi");
             }
             else
             {
                 Status = "Connection failed";
-                await Application.Current!.MainPage!.DisplayAlert("Error", "Could not connect to Raspberry Pi", "OK");
+                await _dialogService.ShowAlertAsync("Error", "Could not connect to Raspberry Pi");
             }
         }
         catch (Exception ex)
         {
             Status = $"Error: {ex.Message}";
-            await Application.Current!.MainPage!.DisplayAlert("Error", ex.Message, "OK");
+            await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
         finally
         {
