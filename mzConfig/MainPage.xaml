@@ -2,183 +2,171 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="mzConfigure.MainPage"
-             Title="MarketZone Config">
+             Title="{Binding PageTitle}">
 
-    <ScrollView>
-        <VerticalStackLayout Padding="20" Spacing="15">
+    <Grid Padding="10" RowDefinitions="*,Auto">
 
-            <!-- Header -->
+        <!-- Status Bar -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,10">
             <Label 
-                Text="Rolling Pin Bakery"
-                FontSize="28"
-                FontAttributes="Bold"
-                HorizontalOptions="Center"
-                TextColor="#FF1595"
-                Margin="0,10,0,20"/>
-
-            <!-- Connection Section -->
-            <Border Stroke="LightGray" Padding="15" StrokeThickness="1">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="10"/>
-                </Border.StrokeShape>
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Raspberry Pi Connection" FontSize="18" FontAttributes="Bold"/>
-
-                    <HorizontalStackLayout Spacing="10">
-                        <Label Text="URL:" VerticalOptions="Center"/>
-                        <Entry 
-                            x:Name="UrlEntry"
-                            Text="{Binding RaspberryPiUrl}"
-                            Placeholder="http://raspberrypi.local:8765"
-                            HorizontalOptions="Fill"/>
-                    </HorizontalStackLayout>
-
-                    <Button 
-                        Text="Test Connection"
-                        Command="{Binding TestConnectionCommand}"
-                        BackgroundColor="#FF1595"
-                        TextColor="White"/>
-                </VerticalStackLayout>
-            </Border>
-
-            <!-- Status -->
-            <Label 
+                Grid.Column="0"
                 Text="{Binding Status}"
                 FontSize="14"
-                HorizontalOptions="Center"
+                VerticalOptions="Center"
                 TextColor="Gray"/>
-
             <ActivityIndicator 
+                Grid.Column="1"
                 IsRunning="{Binding IsLoading}"
                 IsVisible="{Binding IsLoading}"
                 Color="#FF1595"
-                HorizontalOptions="Center"/>
+                WidthRequest="20"
+                HeightRequest="20"/>
+        </Grid>
 
-            <!-- Actions -->
-            <HorizontalStackLayout Spacing="10" HorizontalOptions="Center">
-                <Button 
-                    Text="Load from Display"
-                    Command="{Binding LoadSpecialsCommand}"
-                    BackgroundColor="DarkGreen"
-                    TextColor="White"/>
+        <!-- Specials List with Action Buttons -->
+        <Border Grid.Row="0" Stroke="LightGray" Padding="15" StrokeThickness="1">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="10"/>
+            </Border.StrokeShape>
+            <Grid RowDefinitions="Auto,*" RowSpacing="10">
+                <!-- Header with Action Buttons -->
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <Label 
+                        Grid.Column="0"
+                        Text="Specials List" 
+                        FontSize="18" 
+                        FontAttributes="Bold"
+                        VerticalOptions="Center"/>
 
-                <Button 
-                    Text="Clear Display"
-                    Command="{Binding ClearSpecialsCommand}"
-                    BackgroundColor="DarkRed"
-                    TextColor="White"/>
-            </HorizontalStackLayout>
-
-            <!-- Specials List -->
-            <Border Stroke="LightGray" Padding="15" StrokeThickness="1">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="10"/>
-                </Border.StrokeShape>
-                <VerticalStackLayout Spacing="10">
-                    <HorizontalStackLayout Spacing="10">
-                        <Label 
-                            Text="Specials List" 
-                            FontSize="18" 
-                            FontAttributes="Bold"
-                            HorizontalOptions="Start"
-                            VerticalOptions="Center"/>
+                    <!-- Action Buttons on the Right -->
+                    <HorizontalStackLayout Grid.Column="1" Spacing="8">
                         <Button 
-                            Text="+ Add"
+                            Text="Add"
                             Command="{Binding AddSpecialCommand}"
+                            IsEnabled="{Binding IsConnected}"
                             BackgroundColor="#FF1595"
                             TextColor="White"
-                            Padding="10,5"
-                            HorizontalOptions="End"/>
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="Update"
+                            Command="{Binding UpdateSpecialsCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            BackgroundColor="DarkBlue"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="Load"
+                            Command="{Binding LoadSpecialsCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            BackgroundColor="DarkGreen"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="Clear"
+                            Command="{Binding ClearSpecialsCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            BackgroundColor="DarkRed"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="Header"
+                            Command="{Binding HeaderCommand}"
+                            BackgroundColor="DarkBlue"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="WiFi"
+                            Command="{Binding WiFiCommand}"
+                            BackgroundColor="DarkOrange"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="{Binding ConnectButtonText}"
+                            Command="{Binding ConnectCommand}"
+                            BackgroundColor="{Binding ConnectButtonColor}"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
                     </HorizontalStackLayout>
+                </Grid>
 
-                    <CollectionView 
-                        ItemsSource="{Binding Specials}"
-                        SelectionMode="None"
-                        HeightRequest="300">
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate>
-                                <Border 
-                                    Stroke="LightGray" 
-                                    Padding="10" 
-                                    Margin="0,5"
-                                    StrokeThickness="1">
-                                    <Border.StrokeShape>
-                                        <RoundRectangle CornerRadius="5"/>
-                                    </Border.StrokeShape>
-                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" RowDefinitions="Auto,Auto" RowSpacing="10">
-                                        <!-- Text Input with Color Preview on same line -->
-                                        <HorizontalStackLayout Grid.Column="0" Grid.Row="0" Spacing="10">
-                                            <Entry 
-                                                Text="{Binding Text}"
-                                                Placeholder="Special text"
-                                                HorizontalOptions="FillAndExpand"
-                                                WidthRequest="250"/>
-                                            <Button 
-                                                Text="🎨"
-                                                Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.PickColorCommand}"
-                                                CommandParameter="{Binding .}"
-                                                BackgroundColor="#FF1595"
-                                                TextColor="White"
-                                                WidthRequest="45"
-                                                HeightRequest="45"
-                                                CornerRadius="5"
-                                                Padding="0"
-                                                VerticalOptions="Center"/>
-                                        </HorizontalStackLayout>
+                <!-- Collection View -->
+                <CollectionView 
+                    Grid.Row="1"
+                    ItemsSource="{Binding Specials}"
+                    SelectionMode="None">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate>
+                            <Border 
+                                Stroke="LightGray" 
+                                Padding="10" 
+                                Margin="0,5"
+                                StrokeThickness="1"
+                                BackgroundColor="Black">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="5"/>
+                                </Border.StrokeShape>
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                    <!-- Editable Text Entry with Color -->
+                                    <Entry 
+                                        Grid.Column="0"
+                                        Text="{Binding Text}"
+                                        Placeholder="Special text"
+                                        TextColor="{Binding ColorValue}"
+                                        BackgroundColor="Black"
+                                        FontSize="18"
+                                        FontAttributes="Bold"
+                                        HorizontalOptions="FillAndExpand"
+                                        VerticalOptions="Center"/>
 
-                                        <!-- Preview with black background -->
-                                        <Border 
-                                            Grid.Column="0"
-                                            Grid.Row="1"
-                                            BackgroundColor="Black"
-                                            Padding="10"
-                                            HeightRequest="50">
-                                            <Border.StrokeShape>
-                                                <RoundRectangle CornerRadius="5"/>
-                                            </Border.StrokeShape>
-                                            <Label 
-                                                Text="{Binding Text}"
-                                                TextColor="{Binding Color}"
-                                                FontSize="18"
-                                                FontAttributes="Bold"
-                                                VerticalOptions="Center"/>
-                                        </Border>
+                                    <!-- Color Picker Button -->
+                                    <Button 
+                                        Grid.Column="1"
+                                        Text="🎨"
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.PickColorCommand}"
+                                        CommandParameter="{Binding .}"
+                                        BackgroundColor="#FF1595"
+                                        TextColor="White"
+                                        WidthRequest="45"
+                                        HeightRequest="45"
+                                        CornerRadius="5"
+                                        Padding="0"
+                                        VerticalOptions="Center"/>
 
-                                        <!-- Delete Button -->
-                                        <Button 
-                                            Grid.Column="1"
-                                            Grid.Row="0"
-                                            Grid.RowSpan="2"
-                                            Text="✕"
-                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.RemoveSpecialCommand}"
-                                            CommandParameter="{Binding .}"
-                                            BackgroundColor="Red"
-                                            TextColor="White"
-                                            WidthRequest="40"
-                                            VerticalOptions="Center"/>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                        <CollectionView.EmptyView>
-                            <Label 
-                                Text="No specials. Add some or load from display."
-                                HorizontalOptions="Center"
-                                TextColor="Gray"
-                                Margin="0,20"/>
-                        </CollectionView.EmptyView>
-                    </CollectionView>
+                                    <!-- Delete Button -->
+                                    <Button 
+                                        Grid.Column="2"
+                                        Text="✕"
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.RemoveSpecialCommand}"
+                                        CommandParameter="{Binding .}"
+                                        BackgroundColor="Red"
+                                        TextColor="White"
+                                        WidthRequest="45"
+                                        HeightRequest="45"
+                                        CornerRadius="5"
+                                        Padding="0"
+                                        VerticalOptions="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                    <CollectionView.EmptyView>
+                        <Label 
+                            Text="No specials. Use 'Load' to fetch from display or 'Add' to create new."
+                            HorizontalOptions="Center"
+                            TextColor="Gray"
+                            Margin="0,40"/>
+                    </CollectionView.EmptyView>
+                </CollectionView>
+            </Grid>
+        </Border>
 
-                    <Button 
-                        Text="Update Display"
-                        Command="{Binding UpdateSpecialsCommand}"
-                        BackgroundColor="DarkBlue"
-                        TextColor="White"
-                        Margin="0,10,0,0"/>
-                </VerticalStackLayout>
-            </Border>
-
-        </VerticalStackLayout>
-    </ScrollView>
+    </Grid>
 
 </ContentPage>

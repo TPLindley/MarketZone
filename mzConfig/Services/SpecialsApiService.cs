@@ -99,6 +99,51 @@ public class SpecialsApiService
         }
     }
 
+    /// <summary>
+    /// GET /header - Retrieve current header text and color
+    /// </summary>
+    public async Task<HeaderInfo> GetHeaderAsync()
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/header");
+            response.EnsureSuccessStatusCode();
+
+            var header = await response.Content.ReadFromJsonAsync<HeaderInfo>();
+            return header ?? new HeaderInfo();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to retrieve header: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// POST /header - Set header text and/or color
+    /// </summary>
+    public async Task SetHeaderAsync(string text, string color)
+    {
+        try
+        {
+            var payload = new { text, color };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/header", content);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to set header: {ex.Message}", ex);
+        }
+    }
+
+    public class HeaderInfo
+    {
+        public string Text { get; set; } = string.Empty;
+        public string Color { get; set; } = string.Empty;
+    }
+
     private class UpdateResponse
     {
         public string Status { get; set; } = string.Empty;

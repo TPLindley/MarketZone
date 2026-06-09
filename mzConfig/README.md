@@ -12,6 +12,10 @@ This mobile app provides a user-friendly interface to manage the specials displa
 - Configure the Raspberry Pi URL and port
 - Test connection to ensure the device is reachable
 - Default connection: `http://raspberrypi.local:8765`
+- **WiFi Hotspot Support**: Connect directly to the PI's "MarketZone" WiFi hotspot
+  - Automatic IP detection when connected to hotspot (tries `192.168.4.1`, `192.168.43.1`, etc.)
+  - Secure password storage using platform keychain/secure storage
+  - Default SSID: "MarketZone", Password: "Sweet$Treats99"
 
 ### Display Operations
 - **Load from Display**: Retrieve the current list of specials from the Raspberry Pi

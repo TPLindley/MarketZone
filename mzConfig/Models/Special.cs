@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
+using Microsoft.Maui.Graphics;
 
 namespace mzConfigure.Models;
 
@@ -28,6 +29,23 @@ public class Special : INotifyPropertyChanged
         {
             _color = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ColorValue));
+        }
+    }
+
+    [JsonIgnore]
+    public Microsoft.Maui.Graphics.Color ColorValue
+    {
+        get
+        {
+            try
+            {
+                return Microsoft.Maui.Graphics.Color.FromArgb(_color);
+            }
+            catch
+            {
+                return Microsoft.Maui.Graphics.Colors.White;
+            }
         }
     }
 
