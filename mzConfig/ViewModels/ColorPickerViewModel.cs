@@ -11,7 +11,8 @@ public class ColorPickerViewModel : System.ComponentModel.INotifyPropertyChanged
     public ColorPickerViewModel()
     {
         ConfirmCommand = new Command(async () => await Confirm());
-        
+        SelectColorCommand = new Command<string>(SelectColor);
+
         // Predefined colors for quick selection
         PredefinedColors = new List<ColorOption>
         {
@@ -62,13 +63,16 @@ public class ColorPickerViewModel : System.ComponentModel.INotifyPropertyChanged
     }
 
     public ICommand ConfirmCommand { get; }
+    public ICommand SelectColorCommand { get; }
+
+    private void SelectColor(string hexColor)
+    {
+        HexColor = hexColor;
+    }
 
     private async Task Confirm()
     {
-        await Shell.Current.GoToAsync("..", new Dictionary<string, object>
-        {
-            { "SelectedColor", HexColor }
-        });
+        await Application.Current.MainPage.Navigation.PopModalAsync();
     }
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;

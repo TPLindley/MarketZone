@@ -36,6 +36,7 @@ public class MainViewModel : INotifyPropertyChanged
         AddSpecialCommand = new Command(AddSpecial);
         RemoveSpecialCommand = new Command<Special>(RemoveSpecial);
         TestConnectionCommand = new Command(async () => await TestConnection());
+        PickColorCommand = new Command<Special>(async (special) => await PickColor(special));
     }
 
     public ObservableCollection<Special> Specials { get; }
@@ -78,6 +79,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand AddSpecialCommand { get; }
     public ICommand RemoveSpecialCommand { get; }
     public ICommand TestConnectionCommand { get; }
+    public ICommand PickColorCommand { get; }
 
     private async Task LoadSpecials()
     {
@@ -176,6 +178,28 @@ public class MainViewModel : INotifyPropertyChanged
     {
         Specials.Remove(special);
         Status = "Special removed (not yet sent to display)";
+    }
+
+    private async Task PickColor(Special special)
+    {
+        try
+        {
+            var colorPickerPage = new ColorPickerPage(special.Color);
+            colorPickerPage.Disappearing += (s, e) =>
+            {
+                if (colorPickerPage.BindingContext is ColorPickerViewModel vm)
+                {
+                    special.Color = vm.HexColor;
+                }
+            };
+
+            var navigationPage = new NavigationPage(colorPickerPage);
+            await Application.Current.MainPage.Navigation.PushModalAsync(navigationPage);
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowAlertAsync("Error", $"Failed to open color picker: {ex.Message}");
+        }
     }
 
     private async Task TestConnection()

@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="mzConfigure.ColorPickerPage"
+             Title="Select Color">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="20">
+
+            <!-- Preview -->
+            <Border 
+                Stroke="LightGray"
+                StrokeThickness="2"
+                HeightRequest="100"
+                BackgroundColor="Black">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10"/>
+                </Border.StrokeShape>
+                <Label 
+                    Text="Preview Text"
+                    FontSize="24"
+                    FontAttributes="Bold"
+                    TextColor="{Binding SelectedColor}"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"/>
+            </Border>
+
+            <!-- Hex Input -->
+            <HorizontalStackLayout Spacing="10">
+                <Label Text="Hex Color:" VerticalOptions="Center" WidthRequest="80"/>
+                <Entry 
+                    Text="{Binding HexColor}"
+                    Placeholder="#FFFFFF"
+                    HorizontalOptions="FillAndExpand"/>
+            </HorizontalStackLayout>
+
+            <!-- Predefined Colors -->
+            <Label Text="Quick Select:" FontSize="16" FontAttributes="Bold"/>
+
+            <FlexLayout 
+                Wrap="Wrap"
+                JustifyContent="SpaceEvenly"
+                AlignItems="Center">
+                <FlexLayout.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="Stroke" Value="LightGray"/>
+                        <Setter Property="StrokeThickness" Value="1"/>
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="5"/>
+                        <Setter Property="WidthRequest" Value="80"/>
+                        <Setter Property="HeightRequest" Value="60"/>
+                    </Style>
+                </FlexLayout.Resources>
+
+                <Border x:Name="WhiteColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FFFFFF"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FFFFFF" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="White" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="PinkColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FF1595"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FF1595" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Pink" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="RedColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FF0000"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FF0000" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Red" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="OrangeColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FF8C00"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FF8C00" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Orange" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="YellowColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FFFF00"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FFFF00" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Yellow" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="LimeColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#00FF00"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#00FF00" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Lime" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="CyanColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#00FFFF"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#00FFFF" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Cyan" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="BlueColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#0000FF"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#0000FF" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Blue" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="PurpleColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#800080"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#800080" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Purple" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border x:Name="MagentaColor">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="5"/>
+                    </Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding SelectColorCommand}" CommandParameter="#FF00FF"/>
+                    </Border.GestureRecognizers>
+                    <VerticalStackLayout BackgroundColor="Black" Padding="5" Spacing="2">
+                        <BoxView Color="#FF00FF" HeightRequest="30" CornerRadius="3"/>
+                        <Label Text="Magenta" TextColor="White" FontSize="10" HorizontalOptions="Center"/>
+                    </VerticalStackLayout>
+                </Border>
+            </FlexLayout>
+
+            <!-- Confirm Button -->
+            <Button 
+                Text="Select Color"
+                Command="{Binding ConfirmCommand}"
+                BackgroundColor="#FF1595"
+                TextColor="White"
+                Margin="0,20,0,0"/>
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>
