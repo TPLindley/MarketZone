@@ -18,6 +18,8 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _isConnected;
     private string _headerText = "Rolling Pin Bakery";
     private string _headerColor = "#FFFFFF";
+    private bool _isPortrait;
+    private bool _isLoadingOrientation;
 
     public MainViewModel() : this(new DialogService(), new WiFiService())
     {
@@ -160,6 +162,25 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string PageTitle => _isConnected ? $"{_headerText} Config" : "MarketZone Config";
 
+    public bool IsPortrait
+    {
+        get => _isPortrait;
+        set
+        {
+            if (_isPortrait == value)
+                return;
+
+            _isPortrait = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(OrientationText));
+
+            if (_isConnected && !_isLoadingOrientation)
+                _ = UpdateOrientation();
+        }
+    }
+
+    public string OrientationText => _isPortrait ? "Portrait" : "Landscape";
+
     public Microsoft.Maui.Graphics.Color PageTitleColor
     {
         get
@@ -223,6 +244,21 @@ public class MainViewModel : INotifyPropertyChanged
                     // Fallback to defaults if header endpoint fails
                     HeaderText = "Rolling Pin Bakery";
                     HeaderColor = "#FFFFFF";
+                }
+
+                try
+                {
+                    var orientation = await _apiService.GetOrientationAsync();
+                    _isLoadingOrientation = true;
+                    IsPortrait = orientation == "portrait";
+                    _isLoadingOrientation = false;
+                }
+                catch
+                {
+                    // Default orientation is landscape if the endpoint is unavailable.
+                    _isLoadingOrientation = true;
+                    IsPortrait = false;
+                    _isLoadingOrientation = false;
                 }
             }
 
@@ -390,6 +426,9 @@ public class MainViewModel : INotifyPropertyChanged
             Specials.Clear();
             HeaderText = "Rolling Pin Bakery";
             HeaderColor = "#FFFFFF";
+            _isLoadingOrientation = true;
+            IsPortrait = false;
+            _isLoadingOrientation = false;
             return;
         }
 
@@ -442,6 +481,34 @@ public class MainViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             await _dialogService.ShowAlertAsync("Error", $"Failed to show connection dialog: {ex.Message}");
+        }
+    }
+
+    private async Task UpdateOrientation()
+    {
+        IsLoading = true;
+        var orientation = _isPortrait ? "portrait" : "landscape";
+        Status = $"Setting orientation to {OrientationText}...";
+
+        try
+        {
+            await _apiService.SetOrientationAsync(orientation);
+            Status = $"Orientation set to {OrientationText}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Error: {ex.Message}";
+            await _dialogService.ShowAlertAsync("Error", ex.Message);
+
+            _isLoadingOrientation = true;
+            _isPortrait = !_isPortrait;
+            OnPropertyChanged(nameof(IsPortrait));
+            OnPropertyChanged(nameof(OrientationText));
+            _isLoadingOrientation = false;
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 
@@ -718,4 +785,3 @@ public class MainViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
-

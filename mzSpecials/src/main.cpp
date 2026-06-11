@@ -1,6 +1,12 @@
 #include <gtkmm.h>
 #include <pangomm.h>
+#include <pango/pangocairo.h>
 #include <librsvg/rsvg.h>
+#include <fontconfig/fontconfig.h>
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -8,6 +14,7 @@
 #include <fstream>
 #include <filesystem>
 #include <functional>
+#include <iostream>
 #include "json.hpp"
 #include "httplib.h"
 
@@ -55,8 +62,96 @@ static std::string header_file_path()
     return dir + "/header.json";
 }
 
+static std::string orientation_file_path()
+{
+    std::string dir = std::string(g_get_user_data_dir()) + "/mzSpecials";
+    std::filesystem::create_directories(dir);
+    return dir + "/orientation.json";
+}
+
 static const std::string DEFAULT_HEADER_TEXT  = "Rolling Pin Bakery";
-static const std::string DEFAULT_HEADER_COLOR = "#FF1595";
+static const std::string BRAND_GRAPHIC_COLOR  = "#FF00FF";
+static const std::string DEFAULT_HEADER_COLOR = BRAND_GRAPHIC_COLOR;
+static const std::string LEGACY_HEADER_COLOR  = "#FF1595";
+static const std::string DEFAULT_ORIENTATION  = "landscape";
+
+static std::string normalize_orientation(std::string orientation)
+{
+    std::transform(orientation.begin(), orientation.end(), orientation.begin(), ::tolower);
+    return orientation == "portrait" ? "portrait" : DEFAULT_ORIENTATION;
+}
+
+static std::string shell_quote(const std::string& value)
+{
+    std::string quoted = "'";
+    for (char ch : value) {
+        if (ch == '\'')
+            quoted += "'\\''";
+        else
+            quoted += ch;
+    }
+    quoted += "'";
+    return quoted;
+}
+
+static std::string active_xrandr_output()
+{
+    std::array<char, 256> buffer{};
+    std::string output;
+
+    FILE* pipe = popen("xrandr --query 2>/dev/null", "r");
+    if (!pipe)
+        return "";
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
+        output += buffer.data();
+
+    int rc = pclose(pipe);
+    if (rc != 0)
+        return "";
+
+    std::string fallback;
+    size_t start = 0;
+    while (start < output.size()) {
+        size_t end = output.find('\n', start);
+        std::string line = output.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        const size_t connected = line.find(" connected");
+        if (connected != std::string::npos) {
+            std::string name = line.substr(0, connected);
+            if (line.find(" connected primary") != std::string::npos)
+                return name;
+            if (fallback.empty())
+                fallback = name;
+        }
+        if (end == std::string::npos)
+            break;
+        start = end + 1;
+    }
+
+    return fallback;
+}
+
+static bool apply_display_orientation(const std::string& orientation, std::string* error = nullptr)
+{
+    std::string output = active_xrandr_output();
+    if (output.empty()) {
+        if (error)
+            *error = "no connected xrandr output found";
+        return false;
+    }
+
+    const std::string rotation = normalize_orientation(orientation) == "portrait" ? "right" : "normal";
+    const std::string command =
+        "xrandr --output " + shell_quote(output) + " --rotate " + rotation;
+    int rc = std::system(command.c_str());
+    if (rc != 0) {
+        if (error)
+            *error = "xrandr failed for output " + output;
+        return false;
+    }
+
+    return true;
+}
 
 static void save_header(const std::string& text, const std::string& color)
 {
@@ -73,12 +168,33 @@ static HeaderData load_header()
     if (!f.is_open()) return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
     try {
         json obj = json::parse(f);
-        return {
-            obj.value("text",  DEFAULT_HEADER_TEXT),
-            obj.value("color", DEFAULT_HEADER_COLOR)
-        };
+        std::string color = obj.value("color", DEFAULT_HEADER_COLOR);
+        if (color == LEGACY_HEADER_COLOR)
+            color = DEFAULT_HEADER_COLOR;
+        return {obj.value("text", DEFAULT_HEADER_TEXT), color};
     } catch (...) {
         return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
+    }
+}
+
+static void save_orientation(const std::string& orientation)
+{
+    json obj = {{"orientation", normalize_orientation(orientation)}};
+    std::ofstream f(orientation_file_path());
+    f << obj.dump(2);
+}
+
+static std::string load_orientation()
+{
+    std::ifstream f(orientation_file_path());
+    if (!f.is_open())
+        return DEFAULT_ORIENTATION;
+
+    try {
+        json obj = json::parse(f);
+        return normalize_orientation(obj.value("orientation", DEFAULT_ORIENTATION));
+    } catch (...) {
+        return DEFAULT_ORIENTATION;
     }
 }
 
@@ -129,7 +245,8 @@ struct ScrollState {
     gint64    last_time   = 0;
     bool      needs_scroll = false;
     bool      expanded    = false; // true once duplicate copy has been added
-    int       half_h      = 0;
+    int       first_copy_h = 0;
+    int       loop_h      = 0;
     int       viewport_h  = 0;
 };
 
@@ -144,8 +261,8 @@ static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
     if (state->last_time != 0) {
         double dt = (now - state->last_time) / 1e6;
         state->offset += SCROLL_SPEED * dt;
-        if (state->half_h > 0 && state->offset >= state->half_h)
-            state->offset -= state->half_h;
+        if (state->loop_h > 0 && state->offset >= state->loop_h)
+            state->offset -= state->loop_h;
         viewport->get_vadjustment()->set_value(static_cast<int>(state->offset));
     }
     state->last_time = now;
@@ -199,7 +316,7 @@ static void add_separator(Gtk::Box* box)
     sep_box->set_margin_top(10);
     sep_box->set_margin_bottom(10);
 
-    // Helper: creates a pink horizontal rule that fills its allocated width,
+    // Helper: creates a horizontal rule matching the separator SVG color,
     // vertically centred within display_h pixels.
     auto make_pink_line = [display_h]() {
         auto* line = Gtk::manage(new Gtk::DrawingArea());
@@ -208,7 +325,7 @@ static void add_separator(Gtk::Box* box)
         line->signal_draw().connect([line, display_h](const Cairo::RefPtr<Cairo::Context>& cr) {
             int w = line->get_allocated_width();
             double y = display_h / 2.0;
-            cr->set_source_rgb(1.0, 0.082, 0.576);  // #FF1595 pink
+            cr->set_source_rgb(1.0, 0.0, 1.0);
             cr->set_line_width(3);
             cr->move_to(0, y);
             cr->line_to(w, y);
@@ -244,12 +361,12 @@ static void add_separator(Gtk::Box* box)
         sep_box->pack_start(*da, false, false, 0);
         sep_box->pack_start(*make_pink_line(), true, true, 8);
     } else {
-        // Fallback: pink rule if SVG can't load
+        // Fallback: graphic-color rule if SVG can't load
         auto* rule = Gtk::manage(new Gtk::DrawingArea());
         rule->override_background_color(g_black);
         rule->set_size_request(400, 2);
         rule->signal_draw().connect([](const Cairo::RefPtr<Cairo::Context>& cr) {
-            cr->set_source_rgb(1.0, 0.08, 0.58);
+            cr->set_source_rgb(1.0, 0.0, 1.0);
             cr->set_line_width(2);
             cr->move_to(0, 1);
             cr->line_to(400, 1);
@@ -297,9 +414,96 @@ static std::vector<Special> g_specials;
 static Gtk::Box*           g_content_box = nullptr;
 static ScrollState*        g_state       = nullptr;
 static Pango::FontDescription* g_item_font = nullptr;
-static Gtk::Label*         g_header_label = nullptr;
+static Gtk::DrawingArea*   g_header_area = nullptr;
 static std::string         g_header_text;
 static std::string         g_header_color = DEFAULT_HEADER_COLOR;
+static std::string         g_orientation = DEFAULT_ORIENTATION;
+static std::string         g_header_font_family = "DejaVu Serif";
+static bool                g_using_custom_header_font = false;
+static bool                g_header_font_bold = true;
+static const int           HEADER_FONT_SIZE = 990000;
+static const std::string   PREFERRED_HEADER_FONT_FAMILY = "Merriweather";
+
+static std::string load_custom_header_font_family()
+{
+    const std::filesystem::path assets_dir =
+        std::filesystem::canonical("/proc/self/exe").parent_path() / "assets";
+
+    if (!std::filesystem::exists(assets_dir))
+        return "";
+
+    std::vector<std::filesystem::path> font_paths;
+    for (const auto& entry : std::filesystem::directory_iterator(assets_dir)) {
+        if (!entry.is_regular_file())
+            continue;
+
+        std::string ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".ttf" || ext == ".otf")
+            font_paths.push_back(entry.path());
+    }
+
+    std::sort(font_paths.begin(), font_paths.end());
+
+    std::string fallback_family;
+    bool found_preferred = false;
+
+    for (const auto& font_path : font_paths) {
+        const std::string path = font_path.string();
+        int font_index = 0;
+        FcPattern* pattern = FcFreeTypeQuery(
+            reinterpret_cast<const FcChar8*>(path.c_str()),
+            0,
+            nullptr,
+            &font_index);
+        if (!pattern)
+            continue;
+
+        FcChar8* family = nullptr;
+        std::string family_name;
+        if (FcPatternGetString(pattern, FC_FAMILY, 0, &family) == FcResultMatch)
+            family_name = reinterpret_cast<const char*>(family);
+
+        FcPatternDestroy(pattern);
+
+        if (family_name.empty())
+            continue;
+
+        if (FcConfigAppFontAddFile(
+                FcConfigGetCurrent(),
+                reinterpret_cast<const FcChar8*>(path.c_str()))) {
+            if (fallback_family.empty())
+                fallback_family = family_name;
+            if (family_name == PREFERRED_HEADER_FONT_FAMILY)
+                found_preferred = true;
+        }
+    }
+
+    FcConfigBuildFonts(FcConfigGetCurrent());
+
+    if (found_preferred)
+        return PREFERRED_HEADER_FONT_FAMILY;
+
+    return fallback_family;
+}
+
+static Pango::FontDescription make_header_font(int size = HEADER_FONT_SIZE)
+{
+    Pango::FontDescription font;
+    font.set_family(g_header_font_family);
+    font.set_style(g_using_custom_header_font ? Pango::STYLE_NORMAL : Pango::STYLE_ITALIC);
+    font.set_weight(g_header_font_bold ? Pango::WEIGHT_BOLD : Pango::WEIGHT_NORMAL);
+    font.set_size(size);
+    return font;
+}
+
+static Gdk::RGBA parse_header_color(const std::string& color)
+{
+    Gdk::RGBA rgba;
+    if (!rgba.set(color))
+        rgba.set(DEFAULT_HEADER_COLOR);
+    return rgba;
+}
 
 // Schedule a header text update on the GTK main thread
 static void schedule_header_update()
@@ -312,18 +516,8 @@ static void schedule_header_update()
             text  = g_header_text;
             color = g_header_color;
         }
-        if (g_header_label) {
-            // Escape for Pango markup
-            gchar* escaped_text  = g_markup_escape_text(text.c_str(),  -1);
-            gchar* escaped_color = g_markup_escape_text(color.c_str(), -1);
-            std::string markup =
-                std::string("<span font_family='URW Bookman' style='italic' "
-                            "weight='demibold' size='126000' color='") +
-                escaped_color + "'>" + escaped_text + "</span>";
-            g_free(escaped_text);
-            g_free(escaped_color);
-            g_header_label->set_markup(markup);
-        }
+        if (g_header_area)
+            g_header_area->queue_draw();
     });
 }
 
@@ -342,7 +536,8 @@ static void schedule_rebuild()
             g_state->offset      = 0.0;
             g_state->last_time   = 0;
             g_state->needs_scroll = false;
-            g_state->half_h      = 0;
+            g_state->first_copy_h = 0;
+            g_state->loop_h      = 0;
             g_state->expanded    = false;
         }
     });
@@ -360,6 +555,46 @@ static void run_api_server()
         std::lock_guard<std::mutex> lk(g_mutex);
         json obj = {{"text", g_header_text}, {"color", g_header_color}};
         res.set_content(obj.dump(2), "application/json");
+    });
+
+    // GET /orientation — return current display orientation preference
+    svr.Get("/orientation", [](const httplib::Request&, httplib::Response& res) {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        json obj = {{"orientation", g_orientation}};
+        res.set_content(obj.dump(2), "application/json");
+    });
+
+    // POST /orientation — set display orientation preference
+    // Body: {"orientation": "landscape"} or {"orientation": "portrait"}
+    svr.Post("/orientation", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json obj = json::parse(req.body);
+            if (!obj.contains("orientation")) {
+                res.status = 400;
+                res.set_content("{\"error\":\"orientation field required\"}", "application/json");
+                return;
+            }
+
+            std::string orientation = normalize_orientation(obj.value("orientation", DEFAULT_ORIENTATION));
+            std::string error;
+            if (!apply_display_orientation(orientation, &error)) {
+                res.status = 500;
+                res.set_content((json{{"error", error}}).dump(2), "application/json");
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                g_orientation = orientation;
+            }
+            save_orientation(orientation);
+            res.set_content(
+                (json{{"status", "ok"}, {"orientation", orientation}}).dump(2),
+                "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+        }
     });
 
     // POST /header — set header text and/or color
@@ -452,9 +687,28 @@ int main(int argc, char* argv[])
         auto hdr = load_header();
         g_header_text  = hdr.text;
         g_header_color = hdr.color;
+        g_orientation  = load_orientation();
     }
 
     g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
+
+    {
+        std::string orientation;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            orientation = g_orientation;
+        }
+        std::string error;
+        if (!apply_display_orientation(orientation, &error))
+            std::cerr << "Unable to apply saved orientation: " << error << std::endl;
+    }
+
+    std::string custom_header_font = load_custom_header_font_family();
+    if (!custom_header_font.empty()) {
+        g_header_font_family = custom_header_font;
+        g_using_custom_header_font = true;
+        g_header_font_bold = (custom_header_font == PREFERRED_HEADER_FONT_FAMILY);
+    }
 
     // Font for specials
     Pango::FontDescription item_font;
@@ -473,26 +727,61 @@ int main(int argc, char* argv[])
     Gtk::EventBox header_eb;
     header_eb.override_background_color(g_black);
 
-    Gtk::Label header_label;
-    {
-        gchar* escaped = g_markup_escape_text(g_header_text.c_str(), -1);
-        std::string markup =
-            std::string("<span font_family='URW Bookman' style='italic' "
-                        "weight='demibold' size='126000' color='#FF1595'>") +
-            escaped + "</span>";
-        g_free(escaped);
-        header_label.set_markup(markup);
-    }
-    g_header_label = &header_label;
-    header_label.set_halign(Gtk::ALIGN_CENTER);
-    header_label.set_valign(Gtk::ALIGN_CENTER);
+    Gtk::DrawingArea header_area;
+    g_header_area = &header_area;
+    header_area.override_background_color(g_black);
+    header_area.signal_draw().connect([&header_area](const Cairo::RefPtr<Cairo::Context>& cr) {
+        std::string text;
+        std::string color;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            text = g_header_text;
+            color = g_header_color;
+        }
 
-    auto header_css = Gtk::CssProvider::create();
-    header_css->load_from_data("label { color: #FF1595; background-color: transparent; }");
-    header_label.get_style_context()->add_provider(
-        header_css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+        int w = header_area.get_allocated_width();
+        int h = header_area.get_allocated_height();
+        cr->set_source_rgb(0.0, 0.0, 0.0);
+        cr->rectangle(0, 0, w, h);
+        cr->fill();
 
-    header_eb.add(header_label);
+        auto layout = header_area.create_pango_layout(text);
+        layout->set_alignment(Pango::ALIGN_CENTER);
+
+        Pango::Rectangle ink_rect;
+        Pango::Rectangle logical_rect;
+        int font_size = HEADER_FONT_SIZE;
+        const int min_font_size = 48000;
+        const int x_margin = 8;
+        const int y_margin = 10;
+        double ink_x = 0.0;
+        double ink_y = 0.0;
+        double ink_w = 0.0;
+        double ink_h = 0.0;
+        do {
+            layout->set_font_description(make_header_font(font_size));
+            layout->get_extents(ink_rect, logical_rect);
+            ink_w = static_cast<double>(ink_rect.get_width()) / PANGO_SCALE;
+            ink_h = static_cast<double>(ink_rect.get_height()) / PANGO_SCALE;
+            if ((ink_w <= w - x_margin * 2 && ink_h <= h - y_margin * 2) ||
+                font_size <= min_font_size)
+                break;
+            font_size -= 4000;
+        } while (true);
+
+        ink_x = static_cast<double>(ink_rect.get_x()) / PANGO_SCALE;
+        ink_y = static_cast<double>(ink_rect.get_y()) / PANGO_SCALE;
+
+        Gdk::RGBA rgba = parse_header_color(color);
+        cr->set_antialias(Cairo::ANTIALIAS_GRAY);
+        cr->set_source_rgba(rgba.get_red(), rgba.get_green(), rgba.get_blue(), rgba.get_alpha());
+        cr->move_to((w - ink_w) / 2.0 - ink_x, (h - ink_h) / 2.0 - ink_y);
+        pango_cairo_layout_path(cr->cobj(), layout->gobj());
+        cr->fill();
+        return true;
+    });
+
+    header_eb.add(header_area);
     main_box.pack_start(header_eb, false, false, 0);
 
     // --- Scrolling area ---
@@ -530,7 +819,9 @@ int main(int argc, char* argv[])
 
     window.signal_realize().connect([&]() {
         int h = window.get_screen()->get_height();
-        header_eb.set_size_request(-1, h / 10);
+        header_eb.set_size_request(-1, h / 8);
+        if (auto gdk_window = window.get_window())
+            gdk_window->set_cursor(Gdk::Cursor::create(Gdk::BLANK_CURSOR));
     });
 
     scrolled.signal_size_allocate().connect([state, &scrolled](Gtk::Allocation&) {
@@ -542,6 +833,7 @@ int main(int argc, char* argv[])
         if (!state->expanded) {
             if (content_h > view_h) {
                 // List overflows — add separator + duplicate for seamless loop
+                state->first_copy_h = content_h;
                 std::vector<Special> snap;
                 {
                     std::lock_guard<std::mutex> lk(g_mutex);
@@ -552,16 +844,18 @@ int main(int argc, char* argv[])
             } else {
                 // Fits on screen — single copy, no scroll
                 state->needs_scroll = false;
-                state->half_h = 0;
+                state->first_copy_h = 0;
+                state->loop_h = 0;
                 return;
             }
         }
 
         // Re-measure after potential expansion
         int total_h = state->content_box->get_allocated_height();
-        state->half_h       = total_h / 2;
+        if (state->first_copy_h > 0 && total_h > state->first_copy_h)
+            state->loop_h = total_h - state->first_copy_h;
         state->viewport_h   = view_h;
-        state->needs_scroll = state->half_h > view_h;
+        state->needs_scroll = (state->loop_h > 0);
     });
 
     scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {

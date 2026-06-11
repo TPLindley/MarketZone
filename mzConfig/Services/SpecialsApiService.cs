@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using mzConfigure.Models;
 
 namespace mzConfigure.Services;
@@ -138,10 +139,62 @@ public class SpecialsApiService
         }
     }
 
+    /// <summary>
+    /// GET /orientation - Retrieve current display orientation preference
+    /// </summary>
+    public async Task<string> GetOrientationAsync()
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/orientation");
+            response.EnsureSuccessStatusCode();
+
+            var orientation = await response.Content.ReadFromJsonAsync<OrientationInfo>();
+            return NormalizeOrientation(orientation?.Orientation);
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to retrieve orientation: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// POST /orientation - Set display orientation preference
+    /// </summary>
+    public async Task SetOrientationAsync(string orientation)
+    {
+        try
+        {
+            var payload = new OrientationInfo { Orientation = NormalizeOrientation(orientation) };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/orientation", content);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to set orientation: {ex.Message}", ex);
+        }
+    }
+
+    private static string NormalizeOrientation(string? orientation)
+    {
+        return string.Equals(orientation, "portrait", StringComparison.OrdinalIgnoreCase)
+            ? "portrait"
+            : "landscape";
+    }
+
     public class HeaderInfo
     {
         public string Text { get; set; } = string.Empty;
         public string Color { get; set; } = string.Empty;
+    }
+
+    public class OrientationInfo
+    {
+        [JsonPropertyName("orientation")]
+        public string Orientation { get; set; } = "landscape";
     }
 
     private class UpdateResponse
