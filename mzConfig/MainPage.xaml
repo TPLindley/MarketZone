@@ -93,6 +93,18 @@
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>
+                        <HorizontalStackLayout Spacing="4" VerticalOptions="Center">
+                            <Label
+                                Text="{Binding OrientationText}"
+                                FontSize="12"
+                                VerticalOptions="Center"/>
+                            <Switch
+                                IsToggled="{Binding IsPortrait}"
+                                IsEnabled="{Binding IsConnected}"
+                                VerticalOptions="Center"
+                                OnColor="#FF00FF"
+                                ThumbColor="White"/>
+                        </HorizontalStackLayout>
                         <Button 
                             Text="{Binding ConnectButtonText}"
                             Command="{Binding ConnectCommand}"
