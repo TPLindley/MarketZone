@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="mzConfigure.Views.LibrarySelectionPage"
+             xmlns:models="clr-namespace:mzConfigure.Models"
+             Title="Select from Library"
+             BackgroundColor="Black">
+
+    <Grid Padding="20" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="15">
+
+        <!-- Header -->
+        <Label 
+            Grid.Row="0"
+            Text="Specials Library" 
+            FontSize="24" 
+            FontAttributes="Bold"
+            TextColor="White"
+            HorizontalOptions="Center"/>
+
+        <!-- Info / Count -->
+        <Label 
+            Grid.Row="1"
+            x:Name="InfoLabel"
+            FontSize="14" 
+            TextColor="Gray"
+            HorizontalOptions="Center"/>
+
+        <!-- Library Items List with Checkboxes -->
+        <ScrollView Grid.Row="2">
+            <CollectionView 
+                x:Name="LibraryCollectionView"
+                SelectionMode="None">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:SelectableSpecial">
+                        <Grid Padding="10,5" ColumnDefinitions="Auto,*" ColumnSpacing="10">
+
+                            <!-- Checkbox -->
+                            <CheckBox 
+                                Grid.Column="0"
+                                IsChecked="{Binding IsSelected}"
+                                Color="White"
+                                VerticalOptions="Center"/>
+
+                            <!-- Special Text with Color Preview -->
+                            <Border 
+                                Grid.Column="1"
+                                BackgroundColor="Black"
+                                Stroke="Gray"
+                                StrokeThickness="1"
+                                Padding="10,8">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="5"/>
+                                </Border.StrokeShape>
+                                <Label 
+                                    Text="{Binding Text}"
+                                    TextColor="{Binding ColorValue}"
+                                    FontSize="16"
+                                    VerticalOptions="Center"/>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </ScrollView>
+
+        <!-- Action Buttons -->
+        <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Button 
+                Grid.Column="0"
+                Text="Cancel"
+                Clicked="OnCancelClicked"
+                BackgroundColor="DarkRed"
+                TextColor="White"
+                Padding="15,10"
+                FontSize="16"/>
+            <Button 
+                Grid.Column="1"
+                x:Name="AddButton"
+                Text="Add Selected"
+                Clicked="OnAddSelectedClicked"
+                BackgroundColor="DarkGreen"
+                TextColor="White"
+                Padding="15,10"
+                FontSize="16"/>
+        </Grid>
+
+    </Grid>
+
+</ContentPage>

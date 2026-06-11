@@ -73,6 +73,13 @@
                             Padding="12,8"
                             FontSize="12"/>
                         <Button 
+                            Text="Library"
+                            Command="{Binding LoadFromLibraryCommand}"
+                            BackgroundColor="DarkMagenta"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
                             Text="Header"
                             Command="{Binding HeaderCommand}"
                             BackgroundColor="DarkBlue"

@@ -12,6 +12,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly SpecialsApiService _apiService;
     private readonly IDialogService _dialogService;
     private readonly IWiFiService _wifiService;
+    private readonly SpecialsLibraryService _libraryService;
     private string _status = "Ready";
     private bool _isLoading;
     private string _raspberryPiUrl;
@@ -28,6 +29,7 @@ public class MainViewModel : INotifyPropertyChanged
         _dialogService = dialogService;
         _wifiService = wifiService;
         _apiService = new SpecialsApiService();
+        _libraryService = new SpecialsLibraryService();
 
         // Load saved URL from preferences
         _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://raspberrypi.local:8765");
@@ -38,13 +40,14 @@ public class MainViewModel : INotifyPropertyChanged
         LoadSpecialsCommand = new Command(async () => await LoadSpecials());
         ClearSpecialsCommand = new Command(async () => await ClearSpecials());
         UpdateSpecialsCommand = new Command(async () => await UpdateSpecials());
-        AddSpecialCommand = new Command(AddSpecial);
+        AddSpecialCommand = new Command(async () => await AddSpecial());
         RemoveSpecialCommand = new Command<Special>(RemoveSpecial);
         TestConnectionCommand = new Command(async () => await TestConnection());
         PickColorCommand = new Command<Special>(async (special) => await PickColor(special));
         ConnectCommand = new Command(async () => await ShowConnectDialog());
         HeaderCommand = new Command(async () => await ShowHeaderDialog(), () => _isConnected);
         WiFiCommand = new Command(async () => await ShowWiFiDialog());
+        LoadFromLibraryCommand = new Command(async () => await LoadFromLibrary());
 
         // Auto-connect and load on startup
         _ = InitializeAsync();
@@ -194,6 +197,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ConnectCommand { get; }
     public ICommand HeaderCommand { get; }
     public ICommand WiFiCommand { get; }
+    public ICommand LoadFromLibraryCommand { get; }
 
     private async Task LoadSpecials()
     {
@@ -278,10 +282,14 @@ public class MainViewModel : INotifyPropertyChanged
 
         IsLoading = true;
         Status = "Updating specials...";
-        
+
         try
         {
             var count = await _apiService.UpdateSpecialsAsync(Specials.ToList());
+
+            // Save to library (will filter duplicates automatically)
+            await _libraryService.AddToLibraryAsync(Specials.ToList());
+
             Status = $"Updated {count} specials";
             await _dialogService.ShowAlertAsync("Success", $"Updated {count} specials");
         }
@@ -296,14 +304,152 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    private void AddSpecial()
+    private async Task AddSpecial()
     {
-        Specials.Add(new Special 
-        { 
-            Text = $"Special {Specials.Count + 1}", 
-            Color = "#FFFFFF" 
-        });
-        Status = "Special added (not yet sent to display)";
+        try
+        {
+            // Ask user: pick from library or create new
+            var choice = await Application.Current.MainPage.DisplayActionSheet(
+                "Add Special",
+                "Cancel",
+                null,
+                "Pick from Library",
+                "Create New");
+
+            if (choice == "Pick from Library")
+            {
+                await AddFromLibrary();
+            }
+            else if (choice == "Create New")
+            {
+                await CreateNewSpecial();
+            }
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowAlertAsync("Error", $"Failed to add special: {ex.Message}");
+        }
+    }
+
+    private async Task AddFromLibrary()
+    {
+        try
+        {
+            // Load library
+            var library = await _libraryService.LoadLibraryAsync();
+
+            if (library == null || library.Count == 0)
+            {
+                await _dialogService.ShowAlertAsync(
+                    "Library Empty",
+                    "No specials in library yet. Create a new special first.");
+                return;
+            }
+
+            // Build display list with text and color preview
+            var libraryOptions = library
+                .Select(s => $"{s.Text}")
+                .ToArray();
+
+            // Show selection dialog
+            var selected = await Application.Current.MainPage.DisplayActionSheet(
+                "Select from Library",
+                "Cancel",
+                null,
+                libraryOptions);
+
+            if (string.IsNullOrEmpty(selected) || selected == "Cancel")
+                return;
+
+            // Find the selected special
+            var selectedSpecial = library.FirstOrDefault(s => $"{s.Text}" == selected);
+
+            if (selectedSpecial != null)
+            {
+                // Check if already exists in current list (avoid duplicates)
+                var exists = Specials.Any(s =>
+                    s.Text.Trim().Equals(selectedSpecial.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+
+                if (!exists)
+                {
+                    Specials.Add(new Special
+                    {
+                        Text = selectedSpecial.Text,
+                        Color = selectedSpecial.Color
+                    });
+                    Status = $"Added '{selectedSpecial.Text}' from library";
+                }
+                else
+                {
+                    await _dialogService.ShowAlertAsync(
+                        "Duplicate",
+                        $"'{selectedSpecial.Text}' is already in the list.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowAlertAsync("Error", $"Failed to load from library: {ex.Message}");
+        }
+    }
+
+    private async Task CreateNewSpecial()
+    {
+        try
+        {
+            // Prompt for text
+            var text = await Application.Current.MainPage.DisplayPromptAsync(
+                "New Special",
+                "Enter special text:",
+                placeholder: "e.g., Chocolate Chip Cookies",
+                accept: "Next",
+                cancel: "Cancel");
+
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            // Prompt for color
+            var colors = new Dictionary<string, string>
+            {
+                { "White", "#FFFFFF" },
+                { "Pink", "#FF1595" },
+                { "Red", "#FF0000" },
+                { "Orange", "#FF8C00" },
+                { "Yellow", "#FFFF00" },
+                { "Lime", "#00FF00" },
+                { "Cyan", "#00FFFF" },
+                { "Blue", "#0000FF" },
+                { "Purple", "#800080" },
+                { "Magenta", "#FF00FF" }
+            };
+
+            var colorNames = colors.Keys.ToArray();
+            var selectedColor = await Application.Current.MainPage.DisplayActionSheet(
+                "Select Color",
+                "Cancel",
+                null,
+                colorNames);
+
+            if (string.IsNullOrEmpty(selectedColor) || selectedColor == "Cancel" || !colors.ContainsKey(selectedColor))
+                return;
+
+            // Add the new special
+            var newSpecial = new Special
+            {
+                Text = text,
+                Color = colors[selectedColor]
+            };
+
+            Specials.Add(newSpecial);
+            Status = $"Added '{text}' with {selectedColor} color";
+
+            // Add to library for future use
+            await _libraryService.AddToLibraryAsync(new[] { newSpecial });
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowAlertAsync("Error", $"Failed to create special: {ex.Message}");
+        }
     }
 
     private void RemoveSpecial(Special special)
@@ -347,6 +493,40 @@ public class MainViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             await _dialogService.ShowAlertAsync("Error", $"Failed to select color: {ex.Message}");
+        }
+    }
+
+    private async Task LoadFromLibrary()
+    {
+        try
+        {
+            // Navigate to library selection page
+            var libraryPage = new Views.LibrarySelectionPage();
+
+            // Set up callback to receive selected items
+            libraryPage.OnSpecialsSelected = (selectedSpecials) =>
+            {
+                // Add selected items to current specials list
+                foreach (var special in selectedSpecials)
+                {
+                    // Check if already exists in current list (avoid duplicates)
+                    var exists = Specials.Any(s => 
+                        s.Text.Trim().Equals(special.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+
+                    if (!exists)
+                    {
+                        Specials.Add(special);
+                    }
+                }
+
+                Status = $"Added {selectedSpecials.Count} specials from library (not yet sent to display)";
+            };
+
+            await Shell.Current.Navigation.PushAsync(libraryPage);
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowAlertAsync("Error", $"Failed to open library: {ex.Message}");
         }
     }
 
