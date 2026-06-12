@@ -4,9 +4,7 @@
 #include <librsvg/rsvg.h>
 #include <fontconfig/fontconfig.h>
 #include <algorithm>
-#include <array>
-#include <cstdio>
-#include <cstdlib>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -14,7 +12,6 @@
 #include <fstream>
 #include <filesystem>
 #include <functional>
-#include <iostream>
 #include "json.hpp"
 #include "httplib.h"
 
@@ -79,78 +76,6 @@ static std::string normalize_orientation(std::string orientation)
 {
     std::transform(orientation.begin(), orientation.end(), orientation.begin(), ::tolower);
     return orientation == "portrait" ? "portrait" : DEFAULT_ORIENTATION;
-}
-
-static std::string shell_quote(const std::string& value)
-{
-    std::string quoted = "'";
-    for (char ch : value) {
-        if (ch == '\'')
-            quoted += "'\\''";
-        else
-            quoted += ch;
-    }
-    quoted += "'";
-    return quoted;
-}
-
-static std::string active_xrandr_output()
-{
-    std::array<char, 256> buffer{};
-    std::string output;
-
-    FILE* pipe = popen("xrandr --query 2>/dev/null", "r");
-    if (!pipe)
-        return "";
-
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
-        output += buffer.data();
-
-    int rc = pclose(pipe);
-    if (rc != 0)
-        return "";
-
-    std::string fallback;
-    size_t start = 0;
-    while (start < output.size()) {
-        size_t end = output.find('\n', start);
-        std::string line = output.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        const size_t connected = line.find(" connected");
-        if (connected != std::string::npos) {
-            std::string name = line.substr(0, connected);
-            if (line.find(" connected primary") != std::string::npos)
-                return name;
-            if (fallback.empty())
-                fallback = name;
-        }
-        if (end == std::string::npos)
-            break;
-        start = end + 1;
-    }
-
-    return fallback;
-}
-
-static bool apply_display_orientation(const std::string& orientation, std::string* error = nullptr)
-{
-    std::string output = active_xrandr_output();
-    if (output.empty()) {
-        if (error)
-            *error = "no connected xrandr output found";
-        return false;
-    }
-
-    const std::string rotation = normalize_orientation(orientation) == "portrait" ? "right" : "normal";
-    const std::string command =
-        "xrandr --output " + shell_quote(output) + " --rotate " + rotation;
-    int rc = std::system(command.c_str());
-    if (rc != 0) {
-        if (error)
-            *error = "xrandr failed for output " + output;
-        return false;
-    }
-
-    return true;
 }
 
 static void save_header(const std::string& text, const std::string& color)
@@ -248,7 +173,10 @@ struct ScrollState {
     int       first_copy_h = 0;
     int       loop_h      = 0;
     int       viewport_h  = 0;
+    int       settle_frames = 0;
 };
+
+static bool is_portrait_orientation();
 
 static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
                            ScrollState* state,
@@ -262,8 +190,14 @@ static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
         double dt = (now - state->last_time) / 1e6;
         state->offset += SCROLL_SPEED * dt;
         if (state->loop_h > 0 && state->offset >= state->loop_h)
-            state->offset -= state->loop_h;
-        viewport->get_vadjustment()->set_value(static_cast<int>(state->offset));
+            state->offset = 0.0;
+
+        auto adjustment = is_portrait_orientation()
+            ? viewport->get_hadjustment()
+            : viewport->get_vadjustment();
+        double max_value = std::max(0.0, adjustment->get_upper() - adjustment->get_page_size());
+        if (max_value > 0.0)
+            adjustment->set_value(std::min(state->offset, max_value));
     }
     state->last_time = now;
     return true;
@@ -274,18 +208,23 @@ static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
 // -----------------------------------------------------------------------
 static Gdk::RGBA g_black;
 
-static Gtk::Label* make_special_label(const Special& s, const Pango::FontDescription& font)
+static Gtk::Label* make_special_label(const Special& s,
+                                      const Pango::FontDescription& font,
+                                      bool portrait)
 {
     auto* label = Gtk::manage(new Gtk::Label(s.text));
     label->override_color(s.rgba());
     label->override_background_color(g_black);
     label->override_font(font);
+    label->set_angle(portrait ? 90.0 : 0.0);
+    if (portrait)
+        label->set_size_request(92, -1);
     label->set_halign(Gtk::ALIGN_CENTER);
     label->set_valign(Gtk::ALIGN_CENTER);
     return label;
 }
 
-static void add_separator(Gtk::Box* box)
+static void add_separator(Gtk::Box* box, bool portrait)
 {
     // Render rpbs.svg using librsvg via a DrawingArea
     // SVG is tiny (25.4mm x 3.06mm) — scale it up to a reasonable display size
@@ -299,7 +238,7 @@ static void add_separator(Gtk::Box* box)
         [](RsvgHandle* h){ if (h) g_object_unref(h); });
 
     // Target display height in pixels; width scales proportionally
-    const int display_h = 60;
+    const int display_h = portrait ? 42 : 60;
     double svg_w = 0, svg_h = 0;
     if (rsvg_handle) {
         double out_w = 0, out_h = 0;
@@ -310,11 +249,15 @@ static void add_separator(Gtk::Box* box)
         }
     }
 
-    auto* sep_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    auto* sep_box = Gtk::manage(new Gtk::Box(portrait ? Gtk::ORIENTATION_VERTICAL
+                                                      : Gtk::ORIENTATION_HORIZONTAL, 0));
     sep_box->override_background_color(g_black);
     sep_box->set_halign(Gtk::ALIGN_CENTER);
-    sep_box->set_margin_top(10);
-    sep_box->set_margin_bottom(10);
+    sep_box->set_valign(Gtk::ALIGN_CENTER);
+    sep_box->set_margin_top(portrait ? 0 : 10);
+    sep_box->set_margin_bottom(portrait ? 0 : 10);
+    sep_box->set_margin_left(portrait ? 8 : 0);
+    sep_box->set_margin_right(portrait ? 8 : 0);
 
     // Helper: creates a horizontal rule matching the separator SVG color,
     // vertically centred within display_h pixels.
@@ -335,16 +278,39 @@ static void add_separator(Gtk::Box* box)
         return line;
     };
 
+    auto make_vertical_pink_line = []() {
+        auto* line = Gtk::manage(new Gtk::DrawingArea());
+        line->override_background_color(Gdk::RGBA("black"));
+        line->set_size_request(34, 1);
+        line->signal_draw().connect([line](const Cairo::RefPtr<Cairo::Context>& cr) {
+            int h = line->get_allocated_height();
+            double x = line->get_allocated_width() / 2.0;
+            cr->set_source_rgb(1.0, 0.0, 1.0);
+            cr->set_line_width(3);
+            cr->move_to(x, 0);
+            cr->line_to(x, h);
+            cr->stroke();
+            return false;
+        });
+        return line;
+    };
+
     if (rsvg_handle && svg_w > 0) {
         auto* da = Gtk::manage(new Gtk::DrawingArea());
         da->override_background_color(g_black);
-        da->set_size_request(static_cast<int>(svg_w), display_h);
+        da->set_size_request(
+            portrait ? display_h : static_cast<int>(svg_w),
+            portrait ? static_cast<int>(svg_w) : display_h);
 
         // Capture shared_ptr so handle stays alive with the widget
         da->signal_draw().connect(
-            [rsvg_handle, svg_w, svg_h](const Cairo::RefPtr<Cairo::Context>& cr) {
+            [rsvg_handle, svg_w, svg_h, portrait](const Cairo::RefPtr<Cairo::Context>& cr) {
                 double out_w = 0, out_h = 0;
                 rsvg_handle_get_intrinsic_size_in_pixels(rsvg_handle.get(), &out_w, &out_h);
+                if (portrait) {
+                    cr->translate(0, svg_w);
+                    cr->rotate(-3.14159265358979323846 / 2.0);
+                }
                 if (out_w > 0 && out_h > 0) {
                     double sx = svg_w / out_w;
                     double sy = svg_h / out_h;
@@ -356,20 +322,33 @@ static void add_separator(Gtk::Box* box)
                 return false;
             });
 
-        sep_box->set_halign(Gtk::ALIGN_FILL);
-        sep_box->pack_start(*make_pink_line(), true, true, 8);
-        sep_box->pack_start(*da, false, false, 0);
-        sep_box->pack_start(*make_pink_line(), true, true, 8);
+        if (portrait) {
+            sep_box->set_valign(Gtk::ALIGN_FILL);
+            sep_box->pack_start(*make_vertical_pink_line(), true, true, 6);
+            sep_box->pack_start(*da, false, false, 0);
+            sep_box->pack_start(*make_vertical_pink_line(), true, true, 6);
+        } else {
+            sep_box->set_halign(Gtk::ALIGN_FILL);
+            sep_box->pack_start(*make_pink_line(), true, true, 8);
+            sep_box->pack_start(*da, false, false, 0);
+            sep_box->pack_start(*make_pink_line(), true, true, 8);
+        }
     } else {
         // Fallback: graphic-color rule if SVG can't load
         auto* rule = Gtk::manage(new Gtk::DrawingArea());
         rule->override_background_color(g_black);
-        rule->set_size_request(400, 2);
-        rule->signal_draw().connect([](const Cairo::RefPtr<Cairo::Context>& cr) {
+        rule->set_size_request(portrait ? 34 : 400, portrait ? 400 : 2);
+        rule->signal_draw().connect([portrait, rule](const Cairo::RefPtr<Cairo::Context>& cr) {
             cr->set_source_rgb(1.0, 0.0, 1.0);
             cr->set_line_width(2);
-            cr->move_to(0, 1);
-            cr->line_to(400, 1);
+            if (portrait) {
+                double x = rule->get_allocated_width() / 2.0;
+                cr->move_to(x, 0);
+                cr->line_to(x, rule->get_allocated_height());
+            } else {
+                cr->move_to(0, 1);
+                cr->line_to(rule->get_allocated_width(), 1);
+            }
             cr->stroke();
             return false;
         });
@@ -381,26 +360,30 @@ static void add_separator(Gtk::Box* box)
 
 static void populate_content_box(Gtk::Box* box,
                                  const std::vector<Special>& specials,
-                                 const Pango::FontDescription& font)
+                                 const Pango::FontDescription& font,
+                                 bool portrait)
 {
     // Remove existing children
     for (auto* child : box->get_children())
         box->remove(*child);
 
+    box->set_orientation(portrait ? Gtk::ORIENTATION_HORIZONTAL : Gtk::ORIENTATION_VERTICAL);
+
     // Single copy only — duplicate is added later if scrolling is needed
     for (const auto& s : specials)
-        box->pack_start(*make_special_label(s, font), false, false, 6);
+        box->pack_start(*make_special_label(s, font, portrait), false, false, portrait ? 2 : 6);
 
     box->show_all();
 }
 
 static void expand_for_scroll(Gtk::Box* box,
                               const std::vector<Special>& specials,
-                              const Pango::FontDescription& font)
+                              const Pango::FontDescription& font,
+                              bool portrait)
 {
-    add_separator(box);
+    add_separator(box, portrait);
     for (const auto& s : specials)
-        box->pack_start(*make_special_label(s, font), false, false, 6);
+        box->pack_start(*make_special_label(s, font, portrait), false, false, portrait ? 2 : 6);
     box->show_all();
 }
 
@@ -412,6 +395,10 @@ static std::vector<Special> g_specials;
 
 // GTK widget pointers set during main (only touched on GTK thread)
 static Gtk::Box*           g_content_box = nullptr;
+static Gtk::Box*           g_main_box    = nullptr;
+static Gtk::EventBox*      g_header_box  = nullptr;
+static Gtk::ScrolledWindow* g_scrolled_window = nullptr;
+static Gtk::Viewport*      g_viewport    = nullptr;
 static ScrollState*        g_state       = nullptr;
 static Pango::FontDescription* g_item_font = nullptr;
 static Gtk::DrawingArea*   g_header_area = nullptr;
@@ -423,6 +410,11 @@ static bool                g_using_custom_header_font = false;
 static bool                g_header_font_bold = true;
 static const int           HEADER_FONT_SIZE = 990000;
 static const std::string   PREFERRED_HEADER_FONT_FAMILY = "Merriweather";
+static const double        PI = 3.14159265358979323846;
+
+static void schedule_rebuild();
+static void evaluate_scroll_state();
+static void schedule_scroll_evaluations(int count);
 
 static std::string load_custom_header_font_family()
 {
@@ -505,6 +497,144 @@ static Gdk::RGBA parse_header_color(const std::string& color)
     return rgba;
 }
 
+static void reset_scroll_state()
+{
+    if (!g_state)
+        return;
+
+    g_state->offset       = 0.0;
+    g_state->last_time    = 0;
+    g_state->needs_scroll = false;
+    g_state->first_copy_h = 0;
+    g_state->loop_h       = 0;
+    g_state->expanded     = false;
+    g_state->settle_frames = 8;
+    if (g_viewport) {
+        g_viewport->get_hadjustment()->set_value(0);
+        g_viewport->get_vadjustment()->set_value(0);
+    }
+}
+
+static bool is_portrait_orientation()
+{
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_orientation == "portrait";
+}
+
+static void evaluate_scroll_state()
+{
+    if (!g_state || !g_scrolled_window || !g_content_box || !g_item_font || !g_viewport)
+        return;
+
+    bool portrait = is_portrait_orientation();
+    int content_size = portrait
+        ? g_state->content_box->get_allocated_width()
+        : g_state->content_box->get_allocated_height();
+    int view_size = portrait
+        ? g_scrolled_window->get_allocated_width()
+        : g_scrolled_window->get_allocated_height();
+    if (content_size <= 0 || view_size <= 0)
+        return;
+
+    size_t special_count = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        special_count = g_specials.size();
+    }
+    if (special_count == 0) {
+        g_state->needs_scroll = false;
+        return;
+    }
+
+    bool settling = g_state->settle_frames > 0;
+    if (settling)
+        --g_state->settle_frames;
+
+    if (!g_state->expanded) {
+        double average_item_size = static_cast<double>(content_size) / special_count;
+        int visible_capacity = average_item_size > 0.0
+            ? std::max(1, static_cast<int>(view_size / average_item_size))
+            : 1;
+
+        if (static_cast<int>(special_count) > visible_capacity) {
+            g_state->first_copy_h = std::max(
+                content_size,
+                static_cast<int>(average_item_size * special_count));
+            std::vector<Special> snap;
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                snap = g_specials;
+            }
+            expand_for_scroll(g_content_box, snap, *g_item_font, portrait);
+            g_state->expanded = true;
+            g_state->loop_h = g_state->first_copy_h;
+            g_state->viewport_h = view_size;
+            g_state->needs_scroll = true;
+            return;
+        } else {
+            if (!settling)
+                g_state->needs_scroll = false;
+            g_state->first_copy_h = 0;
+            g_state->loop_h = 0;
+            return;
+        }
+    }
+
+    if (g_state->first_copy_h > 0)
+        g_state->loop_h = g_state->first_copy_h;
+    g_state->viewport_h   = view_size;
+    if (g_state->loop_h > 0)
+        g_state->needs_scroll = true;
+    else if (!settling)
+        g_state->needs_scroll = false;
+}
+
+static void apply_orientation_layout()
+{
+    if (!g_main_box || !g_header_box)
+        return;
+
+    std::string orientation;
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        orientation = g_orientation;
+    }
+
+    auto screen = Gdk::Screen::get_default();
+    int screen_w = screen ? screen->get_width() : 1920;
+    int screen_h = screen ? screen->get_height() : 1080;
+
+    if (orientation == "portrait") {
+        g_main_box->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
+        if (g_content_box)
+            g_content_box->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
+        if (g_scrolled_window)
+            g_scrolled_window->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_NEVER);
+        g_header_box->set_size_request(std::max(140, screen_w / 8), -1);
+    } else {
+        g_main_box->set_orientation(Gtk::ORIENTATION_VERTICAL);
+        if (g_content_box)
+            g_content_box->set_orientation(Gtk::ORIENTATION_VERTICAL);
+        if (g_scrolled_window)
+            g_scrolled_window->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+        g_header_box->set_size_request(-1, std::max(120, screen_h / 8));
+    }
+
+    if (g_header_area)
+        g_header_area->queue_draw();
+    if (g_scrolled_window)
+        g_scrolled_window->queue_resize();
+    reset_scroll_state();
+}
+
+static void schedule_orientation_update()
+{
+    Glib::signal_idle().connect_once([]() {
+        apply_orientation_layout();
+        schedule_rebuild();
+    });
+}
+
 // Schedule a header text update on the GTK main thread
 static void schedule_header_update()
 {
@@ -526,20 +656,31 @@ static void schedule_rebuild()
 {
     Glib::signal_idle().connect_once([]() {
         std::vector<Special> snap;
+        bool portrait;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             snap = g_specials;
+            portrait = g_orientation == "portrait";
         }
-        populate_content_box(g_content_box, snap, *g_item_font);
+        populate_content_box(g_content_box, snap, *g_item_font, portrait);
         // Reset scroll state — size_allocate will re-evaluate if expansion is needed
-        if (g_state) {
-            g_state->offset      = 0.0;
-            g_state->last_time   = 0;
-            g_state->needs_scroll = false;
-            g_state->first_copy_h = 0;
-            g_state->loop_h      = 0;
-            g_state->expanded    = false;
-        }
+        reset_scroll_state();
+        if (g_content_box)
+            g_content_box->queue_resize();
+        if (g_scrolled_window)
+            g_scrolled_window->queue_resize();
+        schedule_scroll_evaluations(6);
+    });
+}
+
+static void schedule_scroll_evaluations(int count)
+{
+    if (count <= 0)
+        return;
+
+    Glib::signal_idle().connect_once([count]() {
+        evaluate_scroll_state();
+        schedule_scroll_evaluations(count - 1);
     });
 }
 
@@ -576,18 +717,12 @@ static void run_api_server()
             }
 
             std::string orientation = normalize_orientation(obj.value("orientation", DEFAULT_ORIENTATION));
-            std::string error;
-            if (!apply_display_orientation(orientation, &error)) {
-                res.status = 500;
-                res.set_content((json{{"error", error}}).dump(2), "application/json");
-                return;
-            }
-
             {
                 std::lock_guard<std::mutex> lk(g_mutex);
                 g_orientation = orientation;
             }
             save_orientation(orientation);
+            schedule_orientation_update();
             res.set_content(
                 (json{{"status", "ok"}, {"orientation", orientation}}).dump(2),
                 "application/json");
@@ -692,17 +827,6 @@ int main(int argc, char* argv[])
 
     g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
 
-    {
-        std::string orientation;
-        {
-            std::lock_guard<std::mutex> lk(g_mutex);
-            orientation = g_orientation;
-        }
-        std::string error;
-        if (!apply_display_orientation(orientation, &error))
-            std::cerr << "Unable to apply saved orientation: " << error << std::endl;
-    }
-
     std::string custom_header_font = load_custom_header_font_family();
     if (!custom_header_font.empty()) {
         g_header_font_family = custom_header_font;
@@ -721,10 +845,12 @@ int main(int argc, char* argv[])
     window.override_background_color(g_black);
 
     Gtk::Box main_box(Gtk::ORIENTATION_VERTICAL, 0);
+    g_main_box = &main_box;
     window.add(main_box);
 
     // --- Header ---
     Gtk::EventBox header_eb;
+    g_header_box = &header_eb;
     header_eb.override_background_color(g_black);
 
     Gtk::DrawingArea header_area;
@@ -733,10 +859,12 @@ int main(int argc, char* argv[])
     header_area.signal_draw().connect([&header_area](const Cairo::RefPtr<Cairo::Context>& cr) {
         std::string text;
         std::string color;
+        std::string orientation;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             text = g_header_text;
             color = g_header_color;
+            orientation = g_orientation;
         }
 
         int w = header_area.get_allocated_width();
@@ -744,6 +872,13 @@ int main(int argc, char* argv[])
         cr->set_source_rgb(0.0, 0.0, 0.0);
         cr->rectangle(0, 0, w, h);
         cr->fill();
+
+        bool portrait = orientation == "portrait";
+        if (portrait) {
+            cr->translate(0, h);
+            cr->rotate(-PI / 2.0);
+            std::swap(w, h);
+        }
 
         auto layout = header_area.create_pango_layout(text);
         layout->set_alignment(Pango::ALIGN_CENTER);
@@ -786,6 +921,7 @@ int main(int argc, char* argv[])
 
     // --- Scrolling area ---
     Gtk::ScrolledWindow scrolled;
+    g_scrolled_window = &scrolled;
     scrolled.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrolled.override_background_color(g_black);
 
@@ -797,6 +933,7 @@ int main(int argc, char* argv[])
 
     Gtk::Viewport* viewport = Gtk::manage(new Gtk::Viewport(
         Glib::RefPtr<Gtk::Adjustment>(), Glib::RefPtr<Gtk::Adjustment>()));
+    g_viewport = viewport;
     viewport->override_background_color(g_black);
     scrolled.add(*viewport);
 
@@ -808,7 +945,7 @@ int main(int argc, char* argv[])
     // Populate initial list
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        populate_content_box(content_box, g_specials, item_font);
+        populate_content_box(content_box, g_specials, item_font, g_orientation == "portrait");
     }
 
     main_box.pack_start(scrolled, true, true, 0);
@@ -818,47 +955,17 @@ int main(int argc, char* argv[])
     g_state = state;
 
     window.signal_realize().connect([&]() {
-        int h = window.get_screen()->get_height();
-        header_eb.set_size_request(-1, h / 8);
+        apply_orientation_layout();
         if (auto gdk_window = window.get_window())
             gdk_window->set_cursor(Gdk::Cursor::create(Gdk::BLANK_CURSOR));
     });
 
     scrolled.signal_size_allocate().connect([state, &scrolled](Gtk::Allocation&) {
-        int content_h = state->content_box->get_allocated_height();
-        int view_h    = scrolled.get_allocated_height();
-        if (content_h <= 0 || view_h <= 0)
-            return;
-
-        if (!state->expanded) {
-            if (content_h > view_h) {
-                // List overflows — add separator + duplicate for seamless loop
-                state->first_copy_h = content_h;
-                std::vector<Special> snap;
-                {
-                    std::lock_guard<std::mutex> lk(g_mutex);
-                    snap = g_specials;
-                }
-                expand_for_scroll(g_content_box, snap, *g_item_font);
-                state->expanded = true;
-            } else {
-                // Fits on screen — single copy, no scroll
-                state->needs_scroll = false;
-                state->first_copy_h = 0;
-                state->loop_h = 0;
-                return;
-            }
-        }
-
-        // Re-measure after potential expansion
-        int total_h = state->content_box->get_allocated_height();
-        if (state->first_copy_h > 0 && total_h > state->first_copy_h)
-            state->loop_h = total_h - state->first_copy_h;
-        state->viewport_h   = view_h;
-        state->needs_scroll = (state->loop_h > 0);
+        evaluate_scroll_state();
     });
 
     scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {
+        evaluate_scroll_state();
         return on_scroll_tick(clock, state, viewport);
     });
 
