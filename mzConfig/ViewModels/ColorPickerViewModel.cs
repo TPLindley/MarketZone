@@ -72,7 +72,11 @@ public class ColorPickerViewModel : System.ComponentModel.INotifyPropertyChanged
 
     private async Task Confirm()
     {
-        await Application.Current.MainPage.Navigation.PopModalAsync();
+        var currentPage = Application.Current?.Windows?.FirstOrDefault()?.Page;
+        if (currentPage != null)
+        {
+            await currentPage.Navigation.PopModalAsync();
+        }
     }
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;

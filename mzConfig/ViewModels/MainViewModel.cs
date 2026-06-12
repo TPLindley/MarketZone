@@ -50,9 +50,16 @@ public class MainViewModel : INotifyPropertyChanged
         HeaderCommand = new Command(async () => await ShowHeaderDialog(), () => _isConnected);
         WiFiCommand = new Command(async () => await ShowWiFiDialog());
         LoadFromLibraryCommand = new Command(async () => await LoadFromLibrary());
+        MoveUpCommand = new Command<Special>(MoveUp);
+        MoveDownCommand = new Command<Special>(MoveDown);
 
         // Auto-connect and load on startup
         _ = InitializeAsync();
+    }
+
+    private Page? GetCurrentPage()
+    {
+        return Application.Current?.Windows?.FirstOrDefault()?.Page;
     }
 
     private async Task InitializeAsync()
@@ -219,6 +226,8 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand HeaderCommand { get; }
     public ICommand WiFiCommand { get; }
     public ICommand LoadFromLibraryCommand { get; }
+    public ICommand MoveUpCommand { get; }
+    public ICommand MoveDownCommand { get; }
 
     private async Task LoadSpecials()
     {
@@ -327,7 +336,6 @@ public class MainViewModel : INotifyPropertyChanged
             await _libraryService.AddToLibraryAsync(Specials.ToList());
 
             Status = $"Updated {count} specials";
-            await _dialogService.ShowAlertAsync("Success", $"Updated {count} specials");
         }
         catch (Exception ex)
         {
@@ -344,147 +352,53 @@ public class MainViewModel : INotifyPropertyChanged
     {
         try
         {
-            // Ask user: pick from library or create new
-            var choice = await Application.Current.MainPage.DisplayActionSheet(
-                "Add Special",
-                "Cancel",
-                null,
-                "Pick from Library",
-                "Create New");
+            var currentPage = GetCurrentPage();
+            if (currentPage == null) return;
 
-            if (choice == "Pick from Library")
+            // Show combined add dialog with existing specials to filter library
+            var addDialog = new Views.AddSpecialDialog(Specials.ToList());
+            await currentPage.Navigation.PushModalAsync(addDialog);
+
+            // Wait for user to complete or cancel
+            await Task.Run(async () =>
             {
-                await AddFromLibrary();
-            }
-            else if (choice == "Create New")
-            {
-                await CreateNewSpecial();
-            }
-        }
-        catch (Exception ex)
-        {
-            await _dialogService.ShowAlertAsync("Error", $"Failed to add special: {ex.Message}");
-        }
-    }
+                while (currentPage.Navigation.ModalStack.Contains(addDialog))
+                {
+                    await Task.Delay(100);
+                }
+            });
 
-    private async Task AddFromLibrary()
-    {
-        try
-        {
-            // Load library
-            var library = await _libraryService.LoadLibraryAsync();
-
-            if (library == null || library.Count == 0)
-            {
-                await _dialogService.ShowAlertAsync(
-                    "Library Empty",
-                    "No specials in library yet. Create a new special first.");
-                return;
-            }
-
-            // Build display list with text and color preview
-            var libraryOptions = library
-                .Select(s => $"{s.Text}")
-                .ToArray();
-
-            // Show selection dialog
-            var selected = await Application.Current.MainPage.DisplayActionSheet(
-                "Select from Library",
-                "Cancel",
-                null,
-                libraryOptions);
-
-            if (string.IsNullOrEmpty(selected) || selected == "Cancel")
-                return;
-
-            // Find the selected special
-            var selectedSpecial = library.FirstOrDefault(s => $"{s.Text}" == selected);
-
-            if (selectedSpecial != null)
+            if (!string.IsNullOrEmpty(addDialog.SpecialText) && !string.IsNullOrEmpty(addDialog.SpecialColorHex))
             {
                 // Check if already exists in current list (avoid duplicates)
                 var exists = Specials.Any(s =>
-                    s.Text.Trim().Equals(selectedSpecial.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+                    s.Text.Trim().Equals(addDialog.SpecialText.Trim(), StringComparison.OrdinalIgnoreCase));
 
                 if (!exists)
                 {
-                    Specials.Add(new Special
+                    var newSpecial = new Special
                     {
-                        Text = selectedSpecial.Text,
-                        Color = selectedSpecial.Color
-                    });
-                    Status = $"Added '{selectedSpecial.Text}' from library";
+                        Text = addDialog.SpecialText,
+                        Color = addDialog.SpecialColorHex
+                    };
+
+                    Specials.Add(newSpecial);
+                    Status = $"Added '{addDialog.SpecialText}' with {addDialog.SpecialColorName} color";
+
+                    // Add to library for future use
+                    await _libraryService.AddToLibraryAsync(new[] { newSpecial });
                 }
                 else
                 {
                     await _dialogService.ShowAlertAsync(
                         "Duplicate",
-                        $"'{selectedSpecial.Text}' is already in the list.");
+                        $"'{addDialog.SpecialText}' is already in the list.");
                 }
             }
         }
         catch (Exception ex)
         {
-            await _dialogService.ShowAlertAsync("Error", $"Failed to load from library: {ex.Message}");
-        }
-    }
-
-    private async Task CreateNewSpecial()
-    {
-        try
-        {
-            // Prompt for text
-            var text = await Application.Current.MainPage.DisplayPromptAsync(
-                "New Special",
-                "Enter special text:",
-                placeholder: "e.g., Chocolate Chip Cookies",
-                accept: "Next",
-                cancel: "Cancel");
-
-            if (string.IsNullOrWhiteSpace(text))
-                return;
-
-            // Prompt for color
-            var colors = new Dictionary<string, string>
-            {
-                { "White", "#FFFFFF" },
-                { "Pink", "#FF1595" },
-                { "Red", "#FF0000" },
-                { "Orange", "#FF8C00" },
-                { "Yellow", "#FFFF00" },
-                { "Lime", "#00FF00" },
-                { "Cyan", "#00FFFF" },
-                { "Blue", "#0000FF" },
-                { "Purple", "#800080" },
-                { "Magenta", "#FF00FF" }
-            };
-
-            var colorNames = colors.Keys.ToArray();
-            var selectedColor = await Application.Current.MainPage.DisplayActionSheet(
-                "Select Color",
-                "Cancel",
-                null,
-                colorNames);
-
-            if (string.IsNullOrEmpty(selectedColor) || selectedColor == "Cancel" || !colors.ContainsKey(selectedColor))
-                return;
-
-            // Add the new special
-            var newSpecial = new Special
-            {
-                Text = text,
-                Color = colors[selectedColor]
-            };
-
-            Specials.Add(newSpecial);
-            Status = $"Added '{text}' with {selectedColor} color";
-
-            // Add to library for future use
-            await _libraryService.AddToLibraryAsync(new[] { newSpecial });
-        }
-        catch (Exception ex)
-        {
-            await _dialogService.ShowAlertAsync("Error", $"Failed to create special: {ex.Message}");
+            await _dialogService.ShowAlertAsync("Error", $"Failed to add special: {ex.Message}");
         }
     }
 
@@ -494,36 +408,50 @@ public class MainViewModel : INotifyPropertyChanged
         Status = "Special removed (not yet sent to display)";
     }
 
+    private void MoveUp(Special special)
+    {
+        var index = Specials.IndexOf(special);
+        if (index > 0)
+        {
+            Specials.Move(index, index - 1);
+            Status = "Special moved up (not yet sent to display)";
+        }
+    }
+
+    private void MoveDown(Special special)
+    {
+        var index = Specials.IndexOf(special);
+        if (index < Specials.Count - 1)
+        {
+            Specials.Move(index, index + 1);
+            Status = "Special moved down (not yet sent to display)";
+        }
+    }
+
     private async Task PickColor(Special special)
     {
         try
         {
-            // Simple action sheet for color selection
-            var colors = new Dictionary<string, string>
-            {
-                { "White", "#FFFFFF" },
-                { "Pink", "#FF1595" },
-                { "Red", "#FF0000" },
-                { "Orange", "#FF8C00" },
-                { "Yellow", "#FFFF00" },
-                { "Lime", "#00FF00" },
-                { "Cyan", "#00FFFF" },
-                { "Blue", "#0000FF" },
-                { "Purple", "#800080" },
-                { "Magenta", "#FF00FF" }
-            };
+            var currentPage = GetCurrentPage();
+            if (currentPage == null) return;
 
-            var colorNames = colors.Keys.ToArray();
-            var action = await Application.Current.MainPage.DisplayActionSheet(
-                "Select Color", 
-                "Cancel", 
-                null, 
-                colorNames);
+            // Show visual color picker
+            var colorPicker = new Views.ColorPickerDialog();
+            await currentPage.Navigation.PushModalAsync(colorPicker);
 
-            if (!string.IsNullOrEmpty(action) && action != "Cancel" && colors.ContainsKey(action))
+            // Wait for user to select or cancel
+            await Task.Run(async () =>
             {
-                special.Color = colors[action];
-                Status = $"Color changed to {action}";
+                while (currentPage.Navigation.ModalStack.Contains(colorPicker))
+                {
+                    await Task.Delay(100);
+                }
+            });
+
+            if (!string.IsNullOrEmpty(colorPicker.SelectedColorHex))
+            {
+                special.Color = colorPicker.SelectedColorHex;
+                Status = $"Color changed to {colorPicker.SelectedColorName}";
             }
         }
         catch (Exception ex)
@@ -615,7 +543,10 @@ public class MainViewModel : INotifyPropertyChanged
         // Show connect dialog
         try
         {
-            var result = await Application.Current.MainPage.DisplayPromptAsync(
+            var currentPage = GetCurrentPage();
+            if (currentPage == null) return;
+
+            var result = await currentPage.DisplayPromptAsync(
                 "Connect to Raspberry Pi",
                 "Enter the URL for your Raspberry Pi:",
                 initialValue: _raspberryPiUrl,
@@ -705,8 +636,11 @@ public class MainViewModel : INotifyPropertyChanged
             // Get current header from PI
             var currentHeader = await _apiService.GetHeaderAsync();
 
+            var currentPage = GetCurrentPage();
+            if (currentPage == null) return;
+
             // Prompt for new header text
-            var newText = await Application.Current.MainPage.DisplayPromptAsync(
+            var newText = await currentPage.DisplayPromptAsync(
                 "Edit Header",
                 "Enter the header text:",
                 initialValue: currentHeader.Text,
@@ -745,6 +679,9 @@ public class MainViewModel : INotifyPropertyChanged
     {
         try
         {
+            var currentPage = GetCurrentPage();
+            if (currentPage == null) return;
+
             // Get current WiFi SSID if available
             var currentSsid = await _wifiService.GetCurrentSsidAsync();
             var currentInfo = string.IsNullOrEmpty(currentSsid) 
@@ -786,7 +723,7 @@ public class MainViewModel : INotifyPropertyChanged
             if (!string.IsNullOrEmpty(defaultSsid) && !string.IsNullOrEmpty(storedPassword))
             {
                 // Ask user if they want to use stored credentials
-                var useStored = await Application.Current.MainPage.DisplayAlert(
+                var useStored = await currentPage.DisplayAlertAsync(
                     "Connect to PI WiFi",
                     $"{currentInfo}\n\nConnect to saved network '{defaultSsid}'?",
                     "Connect",
@@ -820,7 +757,7 @@ public class MainViewModel : INotifyPropertyChanged
             }
 
             // Prompt for SSID
-            var ssid = await Application.Current.MainPage.DisplayPromptAsync(
+            var ssid = await currentPage.DisplayPromptAsync(
                 "Connect to PI WiFi",
                 $"{currentInfo}\n\nEnter the PI's WiFi network name (SSID):",
                 initialValue: defaultSsid,
@@ -848,7 +785,7 @@ public class MainViewModel : INotifyPropertyChanged
             // If no stored password, prompt for it
             if (string.IsNullOrEmpty(password))
             {
-                password = await Application.Current.MainPage.DisplayPromptAsync(
+                password = await currentPage.DisplayPromptAsync(
                     "WiFi Password",
                     $"Enter the password for '{ssid}':",
                     placeholder: "Password (leave empty for open network)",

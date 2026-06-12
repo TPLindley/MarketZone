@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="mzConfigure.Views.AddSpecialDialog"
+             Title="Add Special"
+             BackgroundColor="Black">
+
+    <Grid Padding="20" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" RowSpacing="15">
+
+        <!-- Title -->
+        <Label 
+            Grid.Row="0"
+            Text="Add Special"
+            FontSize="24"
+            FontAttributes="Bold"
+            HorizontalOptions="Center"
+            TextColor="White"/>
+
+        <!-- Library Picker -->
+        <StackLayout Grid.Row="1" Spacing="5">
+            <Label 
+                Text="Pick from Library (or type below)"
+                FontSize="14"
+                TextColor="White"/>
+            <Picker 
+                x:Name="LibraryPicker"
+                Title="Select from library..."
+                TextColor="White"
+                TitleColor="Gray"
+                BackgroundColor="#222222"
+                SelectedIndexChanged="OnLibraryItemSelected"/>
+        </StackLayout>
+
+        <!-- Text Entry -->
+        <StackLayout Grid.Row="2" Spacing="5">
+            <Label 
+                Text="Special Text"
+                FontSize="14"
+                TextColor="White"/>
+            <Entry 
+                x:Name="TextEntry"
+                Placeholder="e.g., Chocolate Chip Cookies"
+                PlaceholderColor="Gray"
+                BackgroundColor="#222222"
+                FontSize="16"
+                FontAttributes="Bold"/>
+        </StackLayout>
+
+        <!-- Color Label -->
+        <Label 
+            Grid.Row="3"
+            Text="Select Color"
+            FontSize="14"
+            TextColor="White"
+            Margin="0,10,0,0"/>
+
+        <!-- Color Grid -->
+        <ScrollView Grid.Row="4">
+            <Grid
+                x:Name="ColorGrid"
+                RowDefinitions="Auto,Auto,Auto"
+                ColumnDefinitions="*,*,*,*"
+                RowSpacing="10"
+                ColumnSpacing="10"
+                Padding="5"
+                HorizontalOptions="Center"
+                VerticalOptions="Start"/>
+        </ScrollView>
+
+        <!-- Action Buttons -->
+        <Grid Grid.Row="5" ColumnDefinitions="*,*" ColumnSpacing="10" Margin="0,10,0,0">
+            <Button 
+                Grid.Column="0"
+                Text="Cancel"
+                Clicked="OnCancelClicked"
+                BackgroundColor="DarkGray"
+                TextColor="White"/>
+            <Button 
+                Grid.Column="1"
+                Text="Add"
+                Clicked="OnAddClicked"
+                BackgroundColor="DarkGreen"
+                TextColor="White"/>
+        </Grid>
+    </Grid>
+</ContentPage>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="mzConfigure.Views.ColorPickerDialog"
+             Title="Select Color"
+             BackgroundColor="Black">
+
+    <Grid Padding="20" RowDefinitions="Auto,*,Auto" RowSpacing="20">
+
+        <!-- Title -->
+        <Label 
+            Grid.Row="0"
+            Text="Select a Color"
+            FontSize="24"
+            FontAttributes="Bold"
+            HorizontalOptions="Center"
+            TextColor="White"/>
+
+        <!-- Color Grid -->
+        <ScrollView Grid.Row="1">
+            <Grid
+                x:Name="ColorGrid"
+                RowDefinitions="Auto,Auto,Auto"
+                ColumnDefinitions="*,*,*,*"
+                RowSpacing="10"
+                ColumnSpacing="10"
+                Padding="10"
+                HorizontalOptions="Center"
+                VerticalOptions="Center"/>
+        </ScrollView>
+
+        <!-- Cancel Button -->
+        <Button 
+            Grid.Row="2"
+            Text="Cancel"
+            Clicked="OnCancelClicked"
+            BackgroundColor="DarkGray"
+            TextColor="White"
+            HorizontalOptions="Center"
+            WidthRequest="200"/>
+    </Grid>
+</ContentPage>

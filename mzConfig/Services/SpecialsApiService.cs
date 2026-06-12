@@ -74,9 +74,27 @@ public class SpecialsApiService
             response.EnsureSuccessStatusCode();
 
             var responseBody = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<UpdateResponse>(responseBody);
 
-            return result?.Count ?? 0;
+            try
+            {
+                var result = JsonSerializer.Deserialize<UpdateResponse>(responseBody, new JsonSerializerOptions 
+                { 
+                    PropertyNameCaseInsensitive = true 
+                });
+
+                // If deserialization succeeded and we got a count, use it
+                if (result != null && result.Count > 0)
+                {
+                    return result.Count;
+                }
+            }
+            catch
+            {
+                // If deserialization fails, fall through to return specials count
+            }
+
+            // Fallback: if the API doesn't return a proper count, use the count we sent
+            return specials.Count;
         }
         catch (Exception ex)
         {
@@ -199,7 +217,10 @@ public class SpecialsApiService
 
     private class UpdateResponse
     {
+        [JsonPropertyName("status")]
         public string Status { get; set; } = string.Empty;
+
+        [JsonPropertyName("count")]
         public int Count { get; set; }
     }
 }
