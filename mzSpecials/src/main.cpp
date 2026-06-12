@@ -22,6 +22,9 @@ static const int API_PORT = 8765;
 
 // --- Scroll speed ---
 static const double SCROLL_SPEED = 40.0;
+static const int PORTRAIT_SPECIAL_WIDTH = 92;
+static const int PORTRAIT_SPECIAL_PADDING = 2;
+static const int PORTRAIT_SPECIAL_SLOT = PORTRAIT_SPECIAL_WIDTH + PORTRAIT_SPECIAL_PADDING * 2;
 
 // -----------------------------------------------------------------------
 // Special entry
@@ -218,7 +221,7 @@ static Gtk::Label* make_special_label(const Special& s,
     label->override_font(font);
     label->set_angle(portrait ? 90.0 : 0.0);
     if (portrait)
-        label->set_size_request(92, -1);
+        label->set_size_request(PORTRAIT_SPECIAL_WIDTH, -1);
     label->set_halign(Gtk::ALIGN_CENTER);
     label->set_valign(Gtk::ALIGN_CENTER);
     return label;
@@ -546,20 +549,20 @@ static void evaluate_scroll_state()
         return;
     }
 
-    bool settling = g_state->settle_frames > 0;
-    if (settling)
-        --g_state->settle_frames;
-
     if (!g_state->expanded) {
         double average_item_size = static_cast<double>(content_size) / special_count;
-        int visible_capacity = average_item_size > 0.0
-            ? std::max(1, static_cast<int>(view_size / average_item_size))
-            : 1;
+        int visible_capacity = portrait
+            ? std::max(1, view_size / PORTRAIT_SPECIAL_SLOT)
+            : (average_item_size > 0.0
+                ? std::max(1, static_cast<int>(view_size / average_item_size))
+                : 1);
 
         if (static_cast<int>(special_count) > visible_capacity) {
             g_state->first_copy_h = std::max(
                 content_size,
-                static_cast<int>(average_item_size * special_count));
+                portrait
+                    ? static_cast<int>(PORTRAIT_SPECIAL_SLOT * special_count)
+                    : static_cast<int>(average_item_size * special_count));
             std::vector<Special> snap;
             {
                 std::lock_guard<std::mutex> lk(g_mutex);
@@ -572,8 +575,7 @@ static void evaluate_scroll_state()
             g_state->needs_scroll = true;
             return;
         } else {
-            if (!settling)
-                g_state->needs_scroll = false;
+            g_state->needs_scroll = false;
             g_state->first_copy_h = 0;
             g_state->loop_h = 0;
             return;
@@ -585,7 +587,7 @@ static void evaluate_scroll_state()
     g_state->viewport_h   = view_size;
     if (g_state->loop_h > 0)
         g_state->needs_scroll = true;
-    else if (!settling)
+    else
         g_state->needs_scroll = false;
 }
 
