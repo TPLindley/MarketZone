@@ -173,6 +173,7 @@ struct ScrollState {
     int       first_copy_h = 0;
     int       loop_h      = 0;
     int       viewport_h  = 0;
+    int       settle_frames = 0;
 };
 
 static bool is_portrait_orientation();
@@ -189,12 +190,14 @@ static bool on_scroll_tick(const Glib::RefPtr<Gdk::FrameClock>& clock,
         double dt = (now - state->last_time) / 1e6;
         state->offset += SCROLL_SPEED * dt;
         if (state->loop_h > 0 && state->offset >= state->loop_h)
-            state->offset -= state->loop_h;
+            state->offset = 0.0;
 
         auto adjustment = is_portrait_orientation()
             ? viewport->get_hadjustment()
             : viewport->get_vadjustment();
-        adjustment->set_value(static_cast<int>(state->offset));
+        double max_value = std::max(0.0, adjustment->get_upper() - adjustment->get_page_size());
+        if (max_value > 0.0)
+            adjustment->set_value(std::min(state->offset, max_value));
     }
     state->last_time = now;
     return true;
@@ -411,6 +414,7 @@ static const double        PI = 3.14159265358979323846;
 
 static void schedule_rebuild();
 static void evaluate_scroll_state();
+static void schedule_scroll_evaluations(int count);
 
 static std::string load_custom_header_font_family()
 {
@@ -504,6 +508,7 @@ static void reset_scroll_state()
     g_state->first_copy_h = 0;
     g_state->loop_h       = 0;
     g_state->expanded     = false;
+    g_state->settle_frames = 8;
     if (g_viewport) {
         g_viewport->get_hadjustment()->set_value(0);
         g_viewport->get_vadjustment()->set_value(0);
@@ -541,14 +546,20 @@ static void evaluate_scroll_state()
         return;
     }
 
+    bool settling = g_state->settle_frames > 0;
+    if (settling)
+        --g_state->settle_frames;
+
     if (!g_state->expanded) {
         double average_item_size = static_cast<double>(content_size) / special_count;
         int visible_capacity = average_item_size > 0.0
             ? std::max(1, static_cast<int>(view_size / average_item_size))
             : 1;
 
-        if (content_size > view_size && static_cast<int>(special_count) > visible_capacity) {
-            g_state->first_copy_h = content_size;
+        if (static_cast<int>(special_count) > visible_capacity) {
+            g_state->first_copy_h = std::max(
+                content_size,
+                static_cast<int>(average_item_size * special_count));
             std::vector<Special> snap;
             {
                 std::lock_guard<std::mutex> lk(g_mutex);
@@ -561,20 +572,21 @@ static void evaluate_scroll_state()
             g_state->needs_scroll = true;
             return;
         } else {
-            g_state->needs_scroll = false;
+            if (!settling)
+                g_state->needs_scroll = false;
             g_state->first_copy_h = 0;
             g_state->loop_h = 0;
             return;
         }
     }
 
-    int total_size = portrait
-        ? g_state->content_box->get_allocated_width()
-        : g_state->content_box->get_allocated_height();
-    if (g_state->first_copy_h > 0 && total_size > g_state->first_copy_h)
-        g_state->loop_h = total_size - g_state->first_copy_h;
+    if (g_state->first_copy_h > 0)
+        g_state->loop_h = g_state->first_copy_h;
     g_state->viewport_h   = view_size;
-    g_state->needs_scroll = (g_state->loop_h > 0);
+    if (g_state->loop_h > 0)
+        g_state->needs_scroll = true;
+    else if (!settling)
+        g_state->needs_scroll = false;
 }
 
 static void apply_orientation_layout()
@@ -657,9 +669,18 @@ static void schedule_rebuild()
             g_content_box->queue_resize();
         if (g_scrolled_window)
             g_scrolled_window->queue_resize();
-        Glib::signal_idle().connect_once([]() {
-            evaluate_scroll_state();
-        });
+        schedule_scroll_evaluations(6);
+    });
+}
+
+static void schedule_scroll_evaluations(int count)
+{
+    if (count <= 0)
+        return;
+
+    Glib::signal_idle().connect_once([count]() {
+        evaluate_scroll_state();
+        schedule_scroll_evaluations(count - 1);
     });
 }
 
@@ -944,8 +965,7 @@ int main(int argc, char* argv[])
     });
 
     scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {
-        if (!state->needs_scroll)
-            evaluate_scroll_state();
+        evaluate_scroll_state();
         return on_scroll_tick(clock, state, viewport);
     });
 
