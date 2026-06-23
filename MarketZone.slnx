@@ -1,3 +1,6 @@
 <Solution>
   <Project Path="mzConfig/mzConfig.csproj" />
+  <Project Path="mzWheeler/mzWheeler.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
 </Solution>
