@@ -12,6 +12,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly SpecialsApiService _apiService;
     private readonly IDialogService _dialogService;
     private readonly IWiFiService _wifiService;
+    private readonly INetworkDiagnosticsService _networkDiagnostics;
     private readonly SpecialsLibraryService _libraryService;
     private string _status = "Ready";
     private bool _isLoading;
@@ -30,11 +31,12 @@ public class MainViewModel : INotifyPropertyChanged
     {
         _dialogService = dialogService;
         _wifiService = wifiService;
+        _networkDiagnostics = new NetworkDiagnosticsService();
         _apiService = new SpecialsApiService();
         _libraryService = new SpecialsLibraryService();
 
         // Load saved URL from preferences
-        _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://raspberrypi.local:8765");
+        _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://10.42.0.1:8765");
         _apiService.BaseUrl = _raspberryPiUrl;
 
         Specials = new ObservableCollection<Special>();
@@ -52,6 +54,7 @@ public class MainViewModel : INotifyPropertyChanged
         LoadFromLibraryCommand = new Command(async () => await LoadFromLibrary());
         MoveUpCommand = new Command<Special>(MoveUp);
         MoveDownCommand = new Command<Special>(MoveDown);
+        NetworkDiagnosticsCommand = new Command(async () => await RunNetworkDiagnostics());
 
         // Auto-connect and load on startup
         _ = InitializeAsync();
@@ -228,6 +231,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand LoadFromLibraryCommand { get; }
     public ICommand MoveUpCommand { get; }
     public ICommand MoveDownCommand { get; }
+    public ICommand NetworkDiagnosticsCommand { get; }
 
     private async Task LoadSpecials()
     {
@@ -505,18 +509,50 @@ public class MainViewModel : INotifyPropertyChanged
             if (isConnected)
             {
                 Status = "Connected successfully!";
-                await _dialogService.ShowAlertAsync("Success", "Connected to Raspberry Pi");
+                await _dialogService.ShowAlertAsync("Success", 
+                    $"✓ Connected to Raspberry Pi\n✓ URL: {_raspberryPiUrl}\n✓ HTTP service is responding");
             }
             else
             {
                 Status = "Connection failed";
-                await _dialogService.ShowAlertAsync("Error", "Could not connect to Raspberry Pi");
+                await _dialogService.ShowAlertAsync("Error", 
+                    $"Could not connect to Raspberry Pi\n\nURL: {_raspberryPiUrl}\n\nThe server returned a non-success status code.");
             }
         }
         catch (Exception ex)
         {
             Status = $"Error: {ex.Message}";
-            await _dialogService.ShowAlertAsync("Error", ex.Message);
+
+            // Build detailed error message
+            var errorMsg = $"Connection Test Failed\n\n";
+            errorMsg += $"URL: {_raspberryPiUrl}\n\n";
+            errorMsg += $"Error: {ex.Message}\n\n";
+
+            // Add specific troubleshooting based on error type
+            if (ex.Message.Contains("timeout"))
+            {
+                errorMsg += "Possible causes:\n";
+                errorMsg += "• Server not running on Pi\n";
+                errorMsg += "• Wrong IP address\n";
+                errorMsg += "• Firewall blocking connection\n";
+                errorMsg += "• Not on same network as Pi";
+            }
+            else if (ex.Message.Contains("Network error") || ex.Message.Contains("Connection refused"))
+            {
+                errorMsg += "Possible causes:\n";
+                errorMsg += "• Server not running (port 8765)\n";
+                errorMsg += "• Service crashed or stopped\n";
+                errorMsg += "• Check: sudo systemctl status mzSpecials";
+            }
+            else if (ex.Message.Contains("No such host"))
+            {
+                errorMsg += "Possible causes:\n";
+                errorMsg += "• DNS cannot resolve hostname\n";
+                errorMsg += "• Try using IP address instead\n";
+                errorMsg += "• Example: http://10.42.0.1:8765";
+            }
+
+            await _dialogService.ShowAlertAsync("Connection Error", errorMsg);
         }
         finally
         {
@@ -892,6 +928,63 @@ public class MainViewModel : INotifyPropertyChanged
             var newUrl = $"http://{workingIp}:8765";
             RaspberryPiUrl = newUrl;
             Status = $"Auto-detected PI at {workingIp}";
+        }
+    }
+
+    private async Task RunNetworkDiagnostics()
+    {
+        IsLoading = true;
+        Status = "Running network diagnostics...";
+
+        try
+        {
+            // Extract host from URL
+            var uri = new Uri(_raspberryPiUrl);
+            var targetHost = uri.Host;
+
+            var report = await _networkDiagnostics.RunDiagnosticsAsync(targetHost);
+
+            // Build detailed message with connection URL info
+            var message = $"=== Network Diagnostics ===\n\n";
+            message += $"Target Host: {targetHost}\n";
+            message += $"Full URL: {_raspberryPiUrl}\n";
+            message += $"Port: {uri.Port}\n\n";
+            message += report.Summary;
+
+            // Add helpful troubleshooting hints
+            var hasHttpIssue = report.Issues.Any(i => i.Contains("HTTP service test failed"));
+            if (hasHttpIssue)
+            {
+                message += "\n\n=== TROUBLESHOOTING ===\n";
+                message += "❌ The device can reach the host but the\n";
+                message += "   HTTP service is not responding.\n\n";
+                message += "Check:\n";
+                message += "• Is the Python server running on the Pi?\n";
+                message += "• Is it listening on port 8765?\n";
+                message += "• Run on Pi: 'sudo systemctl status mzSpecials'\n";
+                message += "• Or check: 'ps aux | grep python'\n";
+                message += "• Try: 'curl http://10.42.0.1:8765/specials'\n";
+            }
+
+            if (!string.IsNullOrEmpty(report.PingResult?.ErrorDetails))
+            {
+                message += $"\n\n--- Technical Details ---\n{report.PingResult.ErrorDetails}";
+            }
+
+            await _dialogService.ShowAlertAsync("Network Diagnostics", message);
+
+            Status = report.Issues.Count == 0 
+                ? $"Diagnostics: All checks passed" 
+                : $"Diagnostics: {report.Issues.Count} issue(s) found";
+        }
+        catch (Exception ex)
+        {
+            Status = "Diagnostics failed";
+            await _dialogService.ShowAlertAsync("Error", $"Failed to run diagnostics: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 

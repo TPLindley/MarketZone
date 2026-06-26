@@ -9,13 +9,21 @@ namespace mzConfigure.Services;
 public class SpecialsApiService
 {
     private readonly HttpClient _httpClient;
-    private string _baseUrl = "http://raspberrypi.local:8765";
+    private string _baseUrl = "http://10.42.0.1:8765";
+    private const int MaxRetries = 2;
+    private const int RetryDelayMs = 500;
 
     public SpecialsApiService()
     {
-        _httpClient = new HttpClient
+        var handler = new HttpClientHandler
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            // Disable connection pooling to avoid stale connections
+            MaxConnectionsPerServer = 1
+        };
+
+        _httpClient = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(15) // Increased timeout
         };
     }
 
@@ -26,22 +34,72 @@ public class SpecialsApiService
     }
 
     /// <summary>
+    /// Send a lightweight GET request to wake up the server if it's idle
+    /// </summary>
+    private async Task WakeUpServerAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var wakeUpResponse = await _httpClient.GetAsync($"{_baseUrl}/specials", cts.Token);
+            // Don't care about the response, just wake up the connection
+        }
+        catch
+        {
+            // If wake-up fails, ignore - the actual request might still work
+        }
+    }
+
+    /// <summary>
     /// GET /specials - Retrieve current display list
     /// </summary>
     public async Task<List<Special>> GetSpecialsAsync()
     {
-        try
+        Exception lastException = null;
+
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
-            var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
-            response.EnsureSuccessStatusCode();
-            
-            var specials = await response.Content.ReadFromJsonAsync<List<Special>>();
-            return specials ?? new List<Special>();
+            try
+            {
+                // Wake up server on first attempt
+                if (attempt == 0)
+                {
+                    await WakeUpServerAsync();
+                }
+
+                var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
+                response.EnsureSuccessStatusCode();
+
+                var specials = await response.Content.ReadFromJsonAsync<List<Special>>();
+                return specials ?? new List<Special>();
+            }
+            catch (HttpRequestException ex)
+            {
+                lastException = new Exception($"Network error retrieving specials from {_baseUrl}: {ex.Message}. Check network connection.", ex);
+
+                if (attempt < MaxRetries - 1)
+                {
+                    await Task.Delay(1000);
+                    continue;
+                }
+            }
+            catch (TaskCanceledException ex)
+            {
+                lastException = new Exception($"Request timeout retrieving specials from {_baseUrl}. Server may be slow or unreachable.", ex);
+
+                if (attempt < MaxRetries - 1)
+                {
+                    await Task.Delay(1000);
+                    continue;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to retrieve specials: {ex.Message}", ex);
+            }
         }
-        catch (Exception ex)
-        {
-            throw new Exception($"Failed to retrieve specials: {ex.Message}", ex);
-        }
+
+        throw lastException ?? new Exception("Failed to retrieve specials after multiple attempts.");
     }
 
     /// <summary>
@@ -54,6 +112,14 @@ public class SpecialsApiService
             var response = await _httpClient.DeleteAsync($"{_baseUrl}/specials");
             response.EnsureSuccessStatusCode();
         }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Network error clearing specials from {_baseUrl}: {ex.Message}. Check network connection.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Request timeout clearing specials from {_baseUrl}. Server may be slow or unreachable.", ex);
+        }
         catch (Exception ex)
         {
             throw new Exception($"Failed to clear specials: {ex.Message}", ex);
@@ -65,41 +131,78 @@ public class SpecialsApiService
     /// </summary>
     public async Task<int> UpdateSpecialsAsync(List<Special> specials)
     {
-        try
+        Exception lastException = null;
+
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
-            var json = JsonSerializer.Serialize(specials);
-
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync($"{_baseUrl}/specials", content);
-            response.EnsureSuccessStatusCode();
-
-            var responseBody = await response.Content.ReadAsStringAsync();
-
             try
             {
-                var result = JsonSerializer.Deserialize<UpdateResponse>(responseBody, new JsonSerializerOptions 
-                { 
-                    PropertyNameCaseInsensitive = true 
-                });
-
-                // If deserialization succeeded and we got a count, use it
-                if (result != null && result.Count > 0)
+                // Wake up server on first attempt
+                if (attempt == 0)
                 {
-                    return result.Count;
+                    await WakeUpServerAsync();
+                }
+
+                var json = JsonSerializer.Serialize(specials);
+
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync($"{_baseUrl}/specials", content);
+                response.EnsureSuccessStatusCode();
+
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                try
+                {
+                    var result = JsonSerializer.Deserialize<UpdateResponse>(responseBody, new JsonSerializerOptions 
+                    { 
+                        PropertyNameCaseInsensitive = true 
+                    });
+
+                    // If deserialization succeeded and we got a count, use it
+                    if (result != null && result.Count > 0)
+                    {
+                        return result.Count;
+                    }
+                }
+                catch
+                {
+                    // If deserialization fails, fall through to return specials count
+                }
+
+                // Fallback: if the API doesn't return a proper count, use the count we sent
+                return specials.Count;
+            }
+            catch (HttpRequestException ex)
+            {
+                lastException = new Exception($"Network error updating specials to {_baseUrl}: {ex.Message}. Check network connection.", ex);
+
+                // Retry on network errors with longer delay
+                if (attempt < MaxRetries - 1)
+                {
+                    await Task.Delay(1000); // Increased delay to give server more time
+                    continue;
                 }
             }
-            catch
+            catch (TaskCanceledException ex)
             {
-                // If deserialization fails, fall through to return specials count
-            }
+                lastException = new Exception($"Request timeout updating specials to {_baseUrl}. Server may be slow or unreachable.", ex);
 
-            // Fallback: if the API doesn't return a proper count, use the count we sent
-            return specials.Count;
+                // Retry on timeout with longer delay
+                if (attempt < MaxRetries - 1)
+                {
+                    await Task.Delay(1000); // Increased delay to give server more time
+                    continue;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Don't retry on other exceptions
+                throw new Exception($"Failed to update specials: {ex.Message}", ex);
+            }
         }
-        catch (Exception ex)
-        {
-            throw new Exception($"Failed to update specials: {ex.Message}", ex);
-        }
+
+        // If we exhausted all retries, throw the last exception
+        throw lastException ?? new Exception("Failed to update specials after multiple attempts.");
     }
 
     /// <summary>
@@ -112,9 +215,17 @@ public class SpecialsApiService
             var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
             return response.IsSuccessStatusCode;
         }
-        catch
+        catch (HttpRequestException ex)
         {
-            return false;
+            throw new Exception($"Network error connecting to {_baseUrl}: {ex.Message}. Check if the Pi is powered on and you're on the correct network.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Connection timeout to {_baseUrl}. The Pi may be unreachable or the address is incorrect.", ex);
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Unexpected error connecting to {_baseUrl}: {ex.Message}", ex);
         }
     }
 
@@ -130,6 +241,14 @@ public class SpecialsApiService
 
             var header = await response.Content.ReadFromJsonAsync<HeaderInfo>();
             return header ?? new HeaderInfo();
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Network error retrieving header from {_baseUrl}: {ex.Message}. Check network connection.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Request timeout retrieving header from {_baseUrl}. Server may be slow or unreachable.", ex);
         }
         catch (Exception ex)
         {
@@ -151,6 +270,14 @@ public class SpecialsApiService
             var response = await _httpClient.PostAsync($"{_baseUrl}/header", content);
             response.EnsureSuccessStatusCode();
         }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Network error setting header to {_baseUrl}: {ex.Message}. Check network connection.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Request timeout setting header to {_baseUrl}. Server may be slow or unreachable.", ex);
+        }
         catch (Exception ex)
         {
             throw new Exception($"Failed to set header: {ex.Message}", ex);
@@ -169,6 +296,14 @@ public class SpecialsApiService
 
             var orientation = await response.Content.ReadFromJsonAsync<OrientationInfo>();
             return NormalizeOrientation(orientation?.Orientation);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Network error retrieving orientation from {_baseUrl}: {ex.Message}. Check network connection.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Request timeout retrieving orientation from {_baseUrl}. Server may be slow or unreachable.", ex);
         }
         catch (Exception ex)
         {
@@ -189,6 +324,14 @@ public class SpecialsApiService
 
             var response = await _httpClient.PostAsync($"{_baseUrl}/orientation", content);
             response.EnsureSuccessStatusCode();
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Network error setting orientation to {_baseUrl}: {ex.Message}. Check network connection.", ex);
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new Exception($"Request timeout setting orientation to {_baseUrl}. Server may be slow or unreachable.", ex);
         }
         catch (Exception ex)
         {

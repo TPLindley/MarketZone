@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="mzConfigure.MainPage"
@@ -28,18 +28,33 @@
             <Border.StrokeShape>
                 <RoundRectangle CornerRadius="10"/>
             </Border.StrokeShape>
-            <Grid RowDefinitions="Auto,*" RowSpacing="10">
-                <!-- Header with Action Buttons -->
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                    <Label 
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+                <!-- Header with Hamburger Menu -->
+                <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <Button 
                         Grid.Column="0"
+                        Text="&#x2630;"
+                        FontSize="24"
+                        BackgroundColor="DarkGray"
+                        TextColor="White"
+                        WidthRequest="45"
+                        HeightRequest="45"
+                        CornerRadius="5"
+                        Padding="0"
+                        Clicked="OnMenuButtonClicked"
+                        VerticalOptions="Center"/>
+                    
+                    <Label 
+                        Grid.Column="1"
                         Text="Specials List" 
                         FontSize="18" 
                         FontAttributes="Bold"
                         VerticalOptions="Center"/>
+                </Grid>
 
-                    <!-- Action Buttons on the Right -->
-                    <HorizontalStackLayout Grid.Column="1" Spacing="8">
+                <!-- Action Buttons Row (horizontally scrollable) -->
+                <ScrollView Grid.Row="1" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                    <HorizontalStackLayout Spacing="8">
                         <Button 
                             Text="Add"
                             Command="{Binding AddSpecialCommand}"
@@ -65,14 +80,6 @@
                             Padding="12,8"
                             FontSize="12"/>
                         <Button 
-                            Text="Clear"
-                            Command="{Binding ClearSpecialsCommand}"
-                            IsEnabled="{Binding IsConnected}"
-                            BackgroundColor="DarkRed"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
-                        <Button 
                             Text="Library"
                             Command="{Binding LoadFromLibraryCommand}"
                             BackgroundColor="DarkMagenta"
@@ -86,38 +93,12 @@
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>
-                        <Button 
-                            Text="WiFi"
-                            Command="{Binding WiFiCommand}"
-                            BackgroundColor="DarkOrange"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
-                        <HorizontalStackLayout Spacing="4" VerticalOptions="Center">
-                            <Label
-                                Text="{Binding OrientationText}"
-                                FontSize="12"
-                                VerticalOptions="Center"/>
-                            <Switch
-                                IsToggled="{Binding IsPortrait}"
-                                IsEnabled="{Binding IsConnected}"
-                                VerticalOptions="Center"
-                                OnColor="#FF00FF"
-                                ThumbColor="White"/>
-                        </HorizontalStackLayout>
-                        <Button 
-                            Text="{Binding ConnectButtonText}"
-                            Command="{Binding ConnectCommand}"
-                            BackgroundColor="{Binding ConnectButtonColor}"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
                     </HorizontalStackLayout>
-                </Grid>
+                </ScrollView>
 
                 <!-- Collection View -->
                 <CollectionView 
-                    Grid.Row="1"
+                    Grid.Row="2"
                     ItemsSource="{Binding Specials}"
                     SelectionMode="None">
                     <CollectionView.ItemTemplate>

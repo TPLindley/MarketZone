@@ -66,11 +66,18 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <AndroidResource Include="Platforms\Android\Resources\xml\network_security_config.xml" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>
+	  <MauiXaml Update="MainPage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
 	  <MauiXaml Update="Views\AddSpecialDialog.xaml">
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
