@@ -28,5 +28,7 @@
 	</array>
 	<key>XSAppIconAssets</key>
 	<string>Assets.xcassets/appicon.appiconset</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MarketZone Config needs local network access to connect to the display unit on the MarketZone Wi-Fi hotspot.</string>
 </dict>
 </plist>

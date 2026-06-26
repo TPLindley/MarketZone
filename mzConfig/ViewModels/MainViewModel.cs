@@ -72,7 +72,15 @@ public class MainViewModel : INotifyPropertyChanged
 
         try
         {
-            var isConnected = await _apiService.TestConnectionAsync();
+            bool isConnected = false;
+            try { isConnected = await _apiService.TestConnectionAsync(); } catch { }
+
+            if (!isConnected)
+            {
+                Status = "Searching for Pi...";
+                isConnected = await TryAutoDetectPiAsync();
+            }
+
             IsConnected = isConnected;
 
             if (isConnected)
@@ -880,24 +888,21 @@ public class MainViewModel : INotifyPropertyChanged
     /// <summary>
     /// When connected to PI's hotspot, automatically switch to common hotspot gateway IPs
     /// </summary>
-    private async Task TrySwitchToHotspotIp(string ssid)
+    /// <summary>
+    /// Probes common hotspot gateway IPs and switches to the first one that responds.
+    /// Returns true if a working IP was found and BaseUrl was updated.
+    /// </summary>
+    private async Task<bool> TryAutoDetectPiAsync()
     {
-        // Only auto-switch for MarketZone hotspot
-        if (!ssid.Equals("MarketZone", StringComparison.OrdinalIgnoreCase))
-            return;
-
-        // Common hotspot gateway IPs to try (in order of likelihood)
         var hotspotIps = new[]
         {
-            "192.168.4.1",      // Most common for Linux/Raspberry Pi hotspots
+            "10.42.0.1",        // NetworkManager shared mode (Raspberry Pi OS Bookworm default)
+            "192.168.4.1",      // hostapd / legacy Linux hotspot
             "192.168.43.1",     // Android hotspot default
             "10.0.0.1",         // Some routers/hotspots
             "192.168.1.1"       // Generic router default
         };
 
-        string? workingIp = null;
-
-        // Try each IP quickly
         foreach (var ip in hotspotIps)
         {
             try
@@ -905,30 +910,29 @@ public class MainViewModel : INotifyPropertyChanged
                 var testUrl = $"http://{ip}:8765";
                 var tempService = new SpecialsApiService { BaseUrl = testUrl };
 
-                // Quick connection test with 2 second timeout
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var canConnect = await tempService.TestConnectionAsync();
-
-                if (canConnect)
+                if (await tempService.TestConnectionAsync(cts.Token))
                 {
-                    workingIp = ip;
-                    break;
+                    RaspberryPiUrl = testUrl;
+                    Status = $"Auto-detected Pi at {ip}";
+                    return true;
                 }
             }
             catch
             {
                 // Try next IP
-                continue;
             }
         }
 
-        // If we found a working IP, switch to it
-        if (workingIp != null)
-        {
-            var newUrl = $"http://{workingIp}:8765";
-            RaspberryPiUrl = newUrl;
-            Status = $"Auto-detected PI at {workingIp}";
-        }
+        return false;
+    }
+
+    private async Task TrySwitchToHotspotIp(string ssid)
+    {
+        if (!ssid.Equals("MarketZone", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        await TryAutoDetectPiAsync();
     }
 
     private async Task RunNetworkDiagnostics()

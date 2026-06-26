@@ -208,11 +208,11 @@ public class SpecialsApiService
     /// <summary>
     /// Test connection to the Raspberry Pi
     /// </summary>
-    public async Task<bool> TestConnectionAsync()
+    public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
+            var response = await _httpClient.GetAsync($"{_baseUrl}/specials", cancellationToken);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)

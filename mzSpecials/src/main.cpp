@@ -4,7 +4,11 @@
 #include <librsvg/rsvg.h>
 #include <fontconfig/fontconfig.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -16,6 +20,25 @@
 #include "httplib.h"
 
 using json = nlohmann::json;
+
+// -----------------------------------------------------------------------
+// Logging
+// -----------------------------------------------------------------------
+static std::mutex g_log_mutex;
+
+static void log(const std::string& level, const std::string& msg)
+{
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
+    localtime_r(&t, &tm_buf);
+
+    std::lock_guard<std::mutex> lk(g_log_mutex);
+    std::clog << std::put_time(&tm_buf, "%H:%M:%S")
+              << " [" << level << "] "
+              << msg << '\n';
+    std::clog.flush();
+}
 
 // --- API port ---
 static const int API_PORT = 8765;
@@ -83,6 +106,7 @@ static std::string normalize_orientation(std::string orientation)
 
 static void save_header(const std::string& text, const std::string& color)
 {
+    log("INFO", "Saving header: text=\"" + text + "\" color=" + color);
     json obj = {{"text", text}, {"color", color}};
     std::ofstream f(header_file_path());
     f << obj.dump(2);
@@ -93,20 +117,33 @@ struct HeaderData { std::string text; std::string color; };
 static HeaderData load_header()
 {
     std::ifstream f(header_file_path());
-    if (!f.is_open()) return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
+    if (!f.is_open()) {
+        log("INFO", "No header file found, using defaults");
+        return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
+    }
     try {
         json obj = json::parse(f);
         std::string color = obj.value("color", DEFAULT_HEADER_COLOR);
-        if (color == LEGACY_HEADER_COLOR)
+        if (color == LEGACY_HEADER_COLOR) {
+            log("INFO", "Migrating legacy header color " + LEGACY_HEADER_COLOR + " -> " + DEFAULT_HEADER_COLOR);
             color = DEFAULT_HEADER_COLOR;
-        return {obj.value("text", DEFAULT_HEADER_TEXT), color};
+            // Write back so this migration only happens once
+            json updated = {{"text", obj.value("text", DEFAULT_HEADER_TEXT)}, {"color", color}};
+            std::ofstream fw(header_file_path());
+            fw << updated.dump(2);
+        }
+        HeaderData hd = {obj.value("text", DEFAULT_HEADER_TEXT), color};
+        log("INFO", "Loaded header: text=\"" + hd.text + "\" color=" + hd.color);
+        return hd;
     } catch (...) {
+        log("WARN", "Failed to parse header file, using defaults");
         return {DEFAULT_HEADER_TEXT, DEFAULT_HEADER_COLOR};
     }
 }
 
 static void save_orientation(const std::string& orientation)
 {
+    log("INFO", "Saving orientation: " + orientation);
     json obj = {{"orientation", normalize_orientation(orientation)}};
     std::ofstream f(orientation_file_path());
     f << obj.dump(2);
@@ -115,13 +152,18 @@ static void save_orientation(const std::string& orientation)
 static std::string load_orientation()
 {
     std::ifstream f(orientation_file_path());
-    if (!f.is_open())
+    if (!f.is_open()) {
+        log("INFO", "No orientation file found, using default: " + DEFAULT_ORIENTATION);
         return DEFAULT_ORIENTATION;
+    }
 
     try {
         json obj = json::parse(f);
-        return normalize_orientation(obj.value("orientation", DEFAULT_ORIENTATION));
+        std::string orientation = normalize_orientation(obj.value("orientation", DEFAULT_ORIENTATION));
+        log("INFO", "Loaded orientation: " + orientation);
+        return orientation;
     } catch (...) {
+        log("WARN", "Failed to parse orientation file, using default: " + DEFAULT_ORIENTATION);
         return DEFAULT_ORIENTATION;
     }
 }
@@ -136,6 +178,7 @@ static std::vector<Special> default_specials()
 
 static void save_specials(const std::vector<Special>& specials)
 {
+    log("INFO", "Saving " + std::to_string(specials.size()) + " specials to " + data_file_path());
     json arr = json::array();
     for (const auto& s : specials)
         arr.push_back({{"text", s.text}, {"color", s.color_hex}});
@@ -147,8 +190,10 @@ static std::vector<Special> load_specials()
 {
     std::string path = data_file_path();
     std::ifstream f(path);
-    if (!f.is_open())
+    if (!f.is_open()) {
+        log("INFO", "No specials file at " + path + ", using defaults");
         return default_specials();
+    }
     try {
         json arr = json::parse(f);
         std::vector<Special> v;
@@ -158,8 +203,14 @@ static std::vector<Special> load_specials()
             if (!text.empty())
                 v.emplace_back(text, color);
         }
-        return v.empty() ? default_specials() : v;
+        if (v.empty()) {
+            log("WARN", "Specials file was empty, using defaults");
+            return default_specials();
+        }
+        log("INFO", "Loaded " + std::to_string(v.size()) + " specials from " + path);
+        return v;
     } catch (...) {
+        log("WARN", "Failed to parse specials file at " + path + ", using defaults");
         return default_specials();
     }
 }
@@ -558,6 +609,9 @@ static void evaluate_scroll_state()
                 : 1);
 
         if (static_cast<int>(special_count) > visible_capacity) {
+            log("DEBUG", "Scroll enabled: " + std::to_string(special_count)
+                + " items, capacity=" + std::to_string(visible_capacity)
+                + " (" + std::string(portrait ? "portrait" : "landscape") + ")");
             g_state->first_copy_h = std::max(
                 content_size,
                 portrait
@@ -575,6 +629,10 @@ static void evaluate_scroll_state()
             g_state->needs_scroll = true;
             return;
         } else {
+            if (g_state->needs_scroll) {
+                log("DEBUG", "Scroll not needed: " + std::to_string(special_count)
+                    + " items fit within capacity=" + std::to_string(visible_capacity));
+            }
             g_state->needs_scroll = false;
             g_state->first_copy_h = 0;
             g_state->loop_h = 0;
@@ -631,6 +689,7 @@ static void apply_orientation_layout()
 
 static void schedule_orientation_update()
 {
+    log("INFO", "Orientation layout update scheduled");
     Glib::signal_idle().connect_once([]() {
         apply_orientation_layout();
         schedule_rebuild();
@@ -656,6 +715,7 @@ static void schedule_header_update()
 // Schedule a UI rebuild on the GTK main thread
 static void schedule_rebuild()
 {
+    log("DEBUG", "UI rebuild scheduled");
     Glib::signal_idle().connect_once([]() {
         std::vector<Special> snap;
         bool portrait;
@@ -694,25 +754,40 @@ static void run_api_server()
     httplib::Server svr;
 
     // GET /header — return current header text and color
-    svr.Get("/header", [](const httplib::Request&, httplib::Response& res) {
-        std::lock_guard<std::mutex> lk(g_mutex);
-        json obj = {{"text", g_header_text}, {"color", g_header_color}};
+    svr.Get("/header", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "GET /header from " + req.remote_addr);
+        std::string text, color;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            text  = g_header_text;
+            color = g_header_color;
+        }
+        json obj = {{"text", text}, {"color", color}};
         res.set_content(obj.dump(2), "application/json");
+        log("HTTP", "GET /header -> text=\"" + text + "\" color=" + color);
     });
 
     // GET /orientation — return current display orientation preference
-    svr.Get("/orientation", [](const httplib::Request&, httplib::Response& res) {
-        std::lock_guard<std::mutex> lk(g_mutex);
-        json obj = {{"orientation", g_orientation}};
+    svr.Get("/orientation", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "GET /orientation from " + req.remote_addr);
+        std::string orientation;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            orientation = g_orientation;
+        }
+        json obj = {{"orientation", orientation}};
         res.set_content(obj.dump(2), "application/json");
+        log("HTTP", "GET /orientation -> " + orientation);
     });
 
     // POST /orientation — set display orientation preference
     // Body: {"orientation": "landscape"} or {"orientation": "portrait"}
     svr.Post("/orientation", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "POST /orientation from " + req.remote_addr + " body=" + req.body);
         try {
             json obj = json::parse(req.body);
             if (!obj.contains("orientation")) {
+                log("WARN", "POST /orientation missing orientation field");
                 res.status = 400;
                 res.set_content("{\"error\":\"orientation field required\"}", "application/json");
                 return;
@@ -725,10 +800,12 @@ static void run_api_server()
             }
             save_orientation(orientation);
             schedule_orientation_update();
+            log("HTTP", "POST /orientation -> set to " + orientation);
             res.set_content(
                 (json{{"status", "ok"}, {"orientation", orientation}}).dump(2),
                 "application/json");
         } catch (const std::exception& e) {
+            log("ERROR", std::string("POST /orientation exception: ") + e.what());
             res.status = 400;
             res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
         }
@@ -737,11 +814,13 @@ static void run_api_server()
     // POST /header — set header text and/or color
     // Body: {"text": "My Bakery", "color": "#FF0000"}
     svr.Post("/header", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "POST /header from " + req.remote_addr + " body=" + req.body);
         try {
             json obj = json::parse(req.body);
             std::string text  = obj.value("text",  "");
             std::string color = obj.value("color", "");
             if (text.empty() && color.empty()) {
+                log("WARN", "POST /header missing text and color fields");
                 res.status = 400;
                 res.set_content("{\"error\":\"text or color field required\"}", "application/json");
                 return;
@@ -753,36 +832,48 @@ static void run_api_server()
             }
             save_header(g_header_text, g_header_color);
             schedule_header_update();
+            log("HTTP", "POST /header -> ok");
             res.set_content("{\"status\":\"ok\"}", "application/json");
         } catch (const std::exception& e) {
+            log("ERROR", std::string("POST /header exception: ") + e.what());
             res.status = 400;
             res.set_content(std::string("{\"error\":\"")+e.what()+"\"}", "application/json");
         }
     });
 
     // GET /specials — return current list
-    svr.Get("/specials", [](const httplib::Request&, httplib::Response& res) {
-        std::lock_guard<std::mutex> lk(g_mutex);
+    svr.Get("/specials", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "GET /specials from " + req.remote_addr);
         json arr = json::array();
-        for (const auto& s : g_specials)
-            arr.push_back({{"text", s.text}, {"color", s.color_hex}});
+        size_t count = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            for (const auto& s : g_specials)
+                arr.push_back({{"text", s.text}, {"color", s.color_hex}});
+            count = g_specials.size();
+        }
         res.set_content(arr.dump(2), "application/json");
+        log("HTTP", "GET /specials -> returned " + std::to_string(count) + " items");
     });
 
     // DELETE /specials — clear the list
-    svr.Delete("/specials", [](const httplib::Request&, httplib::Response& res) {
+    svr.Delete("/specials", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "DELETE /specials from " + req.remote_addr);
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             g_specials.clear();
         }
         save_specials({});
         schedule_rebuild();
+        log("HTTP", "DELETE /specials -> cleared");
         res.set_content("{\"status\":\"cleared\"}", "application/json");
     });
 
     // POST /specials — replace the list
     // Body: [{"text":"...", "color":"#RRGGBB"}, ...]
     svr.Post("/specials", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "POST /specials from " + req.remote_addr
+            + " (" + std::to_string(req.body.size()) + " bytes)");
         try {
             json arr = json::parse(req.body);
             std::vector<Special> newlist;
@@ -798,15 +889,25 @@ static void run_api_server()
             }
             save_specials(newlist);
             schedule_rebuild();
+            log("HTTP", "POST /specials -> accepted " + std::to_string(newlist.size()) + " items");
             res.set_content("{\"status\":\"ok\",\"count\":" +
                             std::to_string(newlist.size()) + "}", "application/json");
         } catch (const std::exception& e) {
+            log("ERROR", std::string("POST /specials exception: ") + e.what());
             res.status = 400;
             res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
         }
     });
 
-    svr.listen("0.0.0.0", API_PORT);
+    if (!svr.bind_to_port("0.0.0.0", API_PORT)) {
+        log("ERROR", "Failed to bind to port " + std::to_string(API_PORT)
+            + " — port already in use?");
+        return;
+    }
+    log("INFO", "API server ready on all interfaces, port " + std::to_string(API_PORT)
+        + " (0.0.0.0 = wlan0 + eth0 + lo)");
+    svr.listen_after_bind();
+    log("WARN", "API server stopped listening");
 }
 
 // -----------------------------------------------------------------------
@@ -814,6 +915,7 @@ static void run_api_server()
 // -----------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
+    log("INFO", "mzSpecials starting up");
     auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.mzSpecials");
 
     // Load persisted list
@@ -960,6 +1062,8 @@ int main(int argc, char* argv[])
         apply_orientation_layout();
         if (auto gdk_window = window.get_window())
             gdk_window->set_cursor(Gdk::Cursor::create(Gdk::BLANK_CURSOR));
+        // Disable screensaver and DPMS so the display stays on
+        system("xset s off s noblank -dpms 2>/dev/null");
     });
 
     scrolled.signal_size_allocate().connect([state, &scrolled](Gtk::Allocation&) {
