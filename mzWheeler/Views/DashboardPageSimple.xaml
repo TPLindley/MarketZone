@@ -34,16 +34,34 @@
                         FontSize="14"
                         TextColor="#888"
                         LineBreakMode="WordWrap"/>
-                    <Button 
-                        Text="Disconnect"
-                        Command="{Binding DisconnectCommand}"
-                        IsEnabled="{Binding IsConnected}"
-                        BackgroundColor="#f44336"
-                        TextColor="White"
-                        Padding="15,10"
-                        FontSize="12"
-                        HorizontalOptions="Center"
-                        WidthRequest="200"/>
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                        <Button 
+                            Grid.Column="0"
+                            Text="Connect"
+                            Command="{Binding ConnectCommand}"
+                            IsEnabled="{Binding IsConnected, Converter={StaticResource InvertedBoolConverter}}"
+                            BackgroundColor="#4CAF50"
+                            TextColor="White"
+                            Padding="15,10"
+                            FontSize="12"/>
+                        <Button 
+                            Grid.Column="1"
+                            Text="Disconnect"
+                            Command="{Binding DisconnectCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            BackgroundColor="#f44336"
+                            TextColor="White"
+                            Padding="15,10"
+                            FontSize="12"/>
+                        <Button 
+                            Grid.Column="2"
+                            Text="Mock Data"
+                            Command="{Binding ToggleMockDataCommand}"
+                            BackgroundColor="#FF9800"
+                            TextColor="White"
+                            Padding="15,10"
+                            FontSize="12"/>
+                    </Grid>
                 </VerticalStackLayout>
             </Border>
 
@@ -89,13 +107,13 @@
                             <!-- Gauge Markers -->
                             <Label Text="0" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="Start" VerticalOptions="End" 
-                                 Margin="10,0,0,10"/>
+                                 Margin="20,0,0,20"/>
                             <Label Text="40" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="Center" VerticalOptions="Start" 
-                                 Margin="-30,10,0,0"/>
+                                 Margin="0,15,0,0"/>
                             <Label Text="80" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="End" VerticalOptions="End" 
-                                 Margin="0,0,10,10"/>
+                                 Margin="0,0,20,20"/>
                         </Grid>
                     </VerticalStackLayout>
                 </Border>
@@ -139,13 +157,13 @@
                             <!-- Gauge Markers -->
                             <Label Text="0" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="Start" VerticalOptions="End" 
-                                 Margin="10,0,0,10"/>
+                                 Margin="20,0,0,20"/>
                             <Label Text="3k" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="Center" VerticalOptions="Start" 
-                                 Margin="-30,10,0,0"/>
+                                 Margin="0,15,0,0"/>
                             <Label Text="6.5k" FontSize="10" TextColor="#666" 
                                  HorizontalOptions="End" VerticalOptions="End" 
-                                 Margin="0,0,10,10"/>
+                                 Margin="0,0,15,20"/>
                         </Grid>
                     </VerticalStackLayout>
                 </Border>

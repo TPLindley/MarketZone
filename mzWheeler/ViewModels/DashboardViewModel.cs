@@ -31,20 +31,15 @@ public class DashboardViewModel : INotifyPropertyChanged
         _useMockData = DeviceInfo.Platform == DevicePlatform.WinUI || 
                        DeviceInfo.Platform == DevicePlatform.macOS;
 
+        ConnectCommand = new Command(async () => await ConnectToObd());
         DisconnectCommand = new Command(async () => await Disconnect());
         ToggleMockDataCommand = new Command(() => ToggleMockData());
-        ForgetDeviceCommand = new Command(() => ForgetDevice());
 
-        // Auto-start: mock data on Windows, OBD connection on iOS/Android
+        // Auto-start mock data on Windows
         if (_useMockData)
         {
             ConnectionStatus = "Using simulated data (Windows/Mac mode)";
             _ = StartMockDataAsync();
-        }
-        else
-        {
-            // Auto-connect to OBD on mobile platforms
-            _ = AutoConnectToObd();
         }
     }
 
@@ -94,94 +89,42 @@ public class DashboardViewModel : INotifyPropertyChanged
         }
     }
 
+    public ICommand ConnectCommand { get; }
     public ICommand DisconnectCommand { get; }
     public ICommand ToggleMockDataCommand { get; }
-    public ICommand ForgetDeviceCommand { get; }
 
-    private async Task AutoConnectToObd()
+    private async Task ConnectToObd()
     {
+        // Stop mock data if running
+        if (_useMockData)
+        {
+            StopMockData();
+        }
+
         ConnectionStatus = "Scanning for devices...";
 
         var devices = await _obdService.ScanForDevicesAsync(TimeSpan.FromSeconds(10));
 
-        if (!devices.Any())
+        if (devices.Any())
         {
-            ConnectionStatus = "No devices found. Using mock data.";
-            _useMockData = true;
-            _ = StartMockDataAsync();
-            return;
-        }
+            // Try to connect to the first OBD device found
+            // In production, you'd want to let the user select from a list
+            var obdDevice = devices.FirstOrDefault(d => d.Name?.Contains("OBD", StringComparison.OrdinalIgnoreCase) ?? false)
+                          ?? devices.First();
 
-        // Check if we have a previously connected device name
-        var lastDeviceId = Preferences.Get("LastOBDDeviceId", string.Empty);
-        var lastDeviceName = Preferences.Get("LastOBDDeviceName", string.Empty);
+            var connected = await _obdService.ConnectToDeviceAsync(obdDevice);
 
-        Plugin.BLE.Abstractions.Contracts.IDevice? selectedDevice = null;
-
-        // Try to auto-connect to the last device if it exists
-        if (!string.IsNullOrEmpty(lastDeviceId))
-        {
-            selectedDevice = devices.FirstOrDefault(d => d.Id.ToString() == lastDeviceId);
-            if (selectedDevice != null)
+            if (connected)
             {
-                ConnectionStatus = $"Auto-connecting to {selectedDevice.Name}...";
+                IsConnected = true;
+                _useMockData = false;
+                // Start polling for data
+                _ = _obdService.StartDataPollingAsync();
             }
-        }
-
-        // If no previous device or it wasn't found, show device picker
-        if (selectedDevice == null)
-        {
-            // Build device list for selection
-            var deviceNames = devices.Select(d => $"{d.Name ?? "Unknown"} ({d.Id})").ToArray();
-
-            var mainPage = Application.Current?.Windows[0]?.Page;
-            if (mainPage == null)
-            {
-                ConnectionStatus = "Using mock data.";
-                _useMockData = true;
-                _ = StartMockDataAsync();
-                return;
-            }
-
-            var selectedName = await mainPage.DisplayActionSheetAsync(
-                "Select OBD-II Device",
-                "Use Mock Data",
-                null,
-                deviceNames);
-
-            if (selectedName == "Use Mock Data" || string.IsNullOrEmpty(selectedName))
-            {
-                ConnectionStatus = "Using mock data.";
-                _useMockData = true;
-                _ = StartMockDataAsync();
-                return;
-            }
-
-            // Find the selected device
-            var index = Array.IndexOf(deviceNames, selectedName);
-            selectedDevice = devices[index];
-        }
-
-        // Connect to the selected device
-        var connected = await _obdService.ConnectToDeviceAsync(selectedDevice);
-
-        if (connected)
-        {
-            IsConnected = true;
-            _useMockData = false;
-
-            // Remember this device
-            Preferences.Set("LastOBDDeviceId", selectedDevice.Id.ToString());
-            Preferences.Set("LastOBDDeviceName", selectedDevice.Name ?? "Unknown");
-
-            // Start polling for data
-            _ = _obdService.StartDataPollingAsync();
         }
         else
         {
-            ConnectionStatus = "Connection failed. Using mock data.";
-            _useMockData = true;
-            _ = StartMockDataAsync();
+            ConnectionStatus = "No devices found. Tap 'Use Mock Data' to see simulated values.";
         }
     }
 
@@ -189,13 +132,6 @@ public class DashboardViewModel : INotifyPropertyChanged
     {
         await _obdService.DisconnectAsync();
         IsConnected = false;
-    }
-
-    private void ForgetDevice()
-    {
-        Preferences.Remove("LastOBDDeviceId");
-        Preferences.Remove("LastOBDDeviceName");
-        ConnectionStatus = "Saved device forgotten. Next connection will show device picker.";
     }
 
     private void ToggleMockData()

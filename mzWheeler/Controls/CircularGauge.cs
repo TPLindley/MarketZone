@@ -103,20 +103,20 @@ public class CircularGauge : GraphicsView
             var centerY = dirtyRect.Center.Y;
             var radius = Math.Min(dirtyRect.Width, dirtyRect.Height) / 2 - _gauge.ArcThickness;
 
-            // Draw background arc (260 degrees starting at 260, sweeping counter-clockwise)
+            // Draw background arc (260 degrees from 260 sweeping clockwise)
             canvas.StrokeColor = _gauge.BackgroundArcColor;
             canvas.StrokeSize = _gauge.ArcThickness;
             canvas.DrawArc(
                 centerX - radius, centerY - radius,
                 radius * 2, radius * 2,
-                260, -260, true, false);
+                260, 260, true, false);
 
             // Calculate progress angle
             var normalizedValue = (_gauge.Value - _gauge.MinValue) / (_gauge.MaxValue - _gauge.MinValue);
             normalizedValue = Math.Max(0, Math.Min(1, normalizedValue)); // Clamp 0-1
             var progressAngle = normalizedValue * 260; // 260 degrees total range
 
-            // Draw progress arc (counter-clockwise from 260°)
+            // Draw progress arc (clockwise from 260°)
             if (progressAngle > 0)
             {
                 canvas.StrokeColor = _gauge.ArcColor;
@@ -124,7 +124,7 @@ public class CircularGauge : GraphicsView
                 canvas.DrawArc(
                     centerX - radius, centerY - radius,
                     radius * 2, radius * 2,
-                    260, (float)-progressAngle, true, false);
+                    260, (float)progressAngle, true, false);
             }
         }
     }
