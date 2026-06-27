@@ -229,7 +229,7 @@ public class DashboardViewModel : INotifyPropertyChanged
                     VehicleData = mockData;
                 });
 
-                await Task.Delay(5000, _mockDataCts.Token); // Update every 5 seconds for testing
+                await Task.Delay(100, _mockDataCts.Token); // Update every 100ms for smooth animation
             }
         }
         catch (TaskCanceledException)

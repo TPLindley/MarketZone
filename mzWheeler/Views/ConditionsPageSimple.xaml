@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:mzWheeler.Controls"
              x:Class="mzWheeler.Views.ConditionsPageSimple"
              Title="Conditions"
              BackgroundColor="#1a1a1a">
@@ -82,41 +83,62 @@
             <!-- GPS Speed and Course Row -->
             <Grid ColumnDefinitions="*,*" RowDefinitions="Auto" ColumnSpacing="15">
 
-                <!-- GPS Speed -->
-                <Border Grid.Column="0" Stroke="#333" Padding="20" StrokeThickness="1" BackgroundColor="#2a2a2a">
+                <!-- GPS Speed Gauge -->
+                <Border Grid.Column="0" Stroke="#333" Padding="15" StrokeThickness="1" BackgroundColor="#2a2a2a">
                     <Border.StrokeShape>
                         <RoundRectangle CornerRadius="10"/>
                     </Border.StrokeShape>
                     <VerticalStackLayout Spacing="10">
-                        <Label Text="GPS Speed" FontSize="16" TextColor="#888" HorizontalOptions="Center"/>
-                        <Label Text="{Binding GpsSpeed, StringFormat='{0:F0}'}" 
-                               FontSize="48" 
-                               FontAttributes="Bold" 
-                               TextColor="#4CAF50" 
-                               HorizontalOptions="Center"/>
-                        <Label Text="km/h" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
-                        <ProgressBar Progress="{Binding GpsSpeed, Converter={StaticResource ProgressConverter}, ConverterParameter=200}" 
-                                   ProgressColor="#4CAF50"
-                                   HeightRequest="10"/>
+                        <Label Text="GPS Speed" FontSize="18" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center"/>
+
+                        <Grid WidthRequest="180" HeightRequest="180" HorizontalOptions="Center">
+                            <controls:CircularGauge 
+                                Value="{Binding GpsSpeed}"
+                                MinValue="0"
+                                MaxValue="80"
+                                ArcColor="#4CAF50"
+                                BackgroundArcColor="#333"
+                                ArcThickness="12"/>
+
+                            <!-- Centered value display -->
+                            <VerticalStackLayout VerticalOptions="Center" HorizontalOptions="Center">
+                                <Label Text="{Binding GpsSpeed, StringFormat='{0:F0}'}" 
+                                       FontSize="48" 
+                                       FontAttributes="Bold" 
+                                       TextColor="#4CAF50" 
+                                       HorizontalOptions="Center"/>
+                                <Label Text="km/h" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
+                            </VerticalStackLayout>
+
+                            <!-- Gauge Markers -->
+                            <Label Text="0" FontSize="10" TextColor="#666" 
+                                  HorizontalOptions="Start" VerticalOptions="End" 
+                                  Margin="10,0,0,20"/>
+                            <Label Text="40" FontSize="10" TextColor="#666" 
+                                  HorizontalOptions="Center" VerticalOptions="Start" 
+                                  Margin="0,5,0,0"/>
+                            <Label Text="80" FontSize="10" TextColor="#666" 
+                                  HorizontalOptions="End" VerticalOptions="End" 
+                                  Margin="0,0,10,20"/>
+                        </Grid>
                     </VerticalStackLayout>
                 </Border>
 
-                <!-- Course/Heading -->
-                <Border Grid.Column="1" Stroke="#333" Padding="20" StrokeThickness="1" BackgroundColor="#2a2a2a">
+                <!-- Heading Gauge -->
+                <Border Grid.Column="1" Stroke="#333" Padding="15" StrokeThickness="1" BackgroundColor="#2a2a2a">
                     <Border.StrokeShape>
                         <RoundRectangle CornerRadius="10"/>
                     </Border.StrokeShape>
                     <VerticalStackLayout Spacing="10">
-                        <Label Text="Heading" FontSize="16" TextColor="#888" HorizontalOptions="Center"/>
-                        <Label Text="{Binding Course, StringFormat='{0:F0}°'}" 
-                               FontSize="48" 
-                               FontAttributes="Bold" 
-                               TextColor="#2196F3" 
-                               HorizontalOptions="Center"/>
-                        <Label Text="{Binding CourseDirection}" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
-                        <ProgressBar Progress="{Binding Course, Converter={StaticResource ProgressConverter}, ConverterParameter=360}" 
-                                   ProgressColor="#2196F3"
-                                   HeightRequest="10"/>
+                        <Label Text="Heading" FontSize="18" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center"/>
+
+                        <Grid WidthRequest="200" HeightRequest="200" HorizontalOptions="Center">
+                            <controls:CompassGaugeView 
+                                Heading="{Binding Course}"
+                                ArcColor="#2196F3"
+                                BackgroundArcColor="#333"
+                                ArcThickness="12"/>
+                        </Grid>
                     </VerticalStackLayout>
                 </Border>
             </Grid>
@@ -128,67 +150,49 @@
                 </Border.StrokeShape>
                 <VerticalStackLayout Spacing="15">
                     <Label 
-                        Text="Device Tilt"
+                        Text="Device Orientation"
                         FontSize="20"
                         FontAttributes="Bold"
-                        TextColor="White"/>
+                        TextColor="White"
+                        HorizontalOptions="Center"/>
 
-                    <!-- Pitch, Roll, Yaw -->
+                    <!-- 3D Tilt Sphere -->
+                    <controls:TiltSphereView 
+                        Pitch="{Binding Pitch}"
+                        Roll="{Binding Roll}"
+                        Yaw="{Binding Yaw}"
+                        WidthRequest="300"
+                        HeightRequest="300"
+                        HorizontalOptions="Center"/>
+
+                    <!-- Numeric readouts below sphere -->
                     <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto" ColumnSpacing="10">
+                        <VerticalStackLayout Grid.Column="0" Spacing="5">
+                            <Label Text="Pitch" FontSize="12" TextColor="#888" HorizontalOptions="Center"/>
+                            <Label Text="{Binding Pitch, StringFormat='{0:F1}°'}" 
+                                   FontSize="18" 
+                                   FontAttributes="Bold" 
+                                   TextColor="#9C27B0" 
+                                   HorizontalOptions="Center"/>
+                        </VerticalStackLayout>
 
-                        <!-- Pitch -->
-                        <Border Grid.Column="0" Stroke="#333" Padding="15" StrokeThickness="1" BackgroundColor="#1a1a1a">
-                            <Border.StrokeShape>
-                                <RoundRectangle CornerRadius="8"/>
-                            </Border.StrokeShape>
-                            <VerticalStackLayout Spacing="5">
-                                <Label Text="Pitch" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
-                                <Label Text="{Binding Pitch, StringFormat='{0:F1}°'}" 
-                                       FontSize="28" 
-                                       FontAttributes="Bold" 
-                                       TextColor="#9C27B0" 
-                                       HorizontalOptions="Center"/>
-                                <ProgressBar Progress="{Binding Pitch, Converter={StaticResource ProgressConverter}, ConverterParameter=90}" 
-                                           ProgressColor="#9C27B0"
-                                           HeightRequest="6"/>
-                            </VerticalStackLayout>
-                        </Border>
+                        <VerticalStackLayout Grid.Column="1" Spacing="5">
+                            <Label Text="Roll" FontSize="12" TextColor="#888" HorizontalOptions="Center"/>
+                            <Label Text="{Binding Roll, StringFormat='{0:F1}°'}" 
+                                   FontSize="18" 
+                                   FontAttributes="Bold" 
+                                   TextColor="#FF9800" 
+                                   HorizontalOptions="Center"/>
+                        </VerticalStackLayout>
 
-                        <!-- Roll -->
-                        <Border Grid.Column="1" Stroke="#333" Padding="15" StrokeThickness="1" BackgroundColor="#1a1a1a">
-                            <Border.StrokeShape>
-                                <RoundRectangle CornerRadius="8"/>
-                            </Border.StrokeShape>
-                            <VerticalStackLayout Spacing="5">
-                                <Label Text="Roll" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
-                                <Label Text="{Binding Roll, StringFormat='{0:F1}°'}" 
-                                       FontSize="28" 
-                                       FontAttributes="Bold" 
-                                       TextColor="#FF9800" 
-                                       HorizontalOptions="Center"/>
-                                <ProgressBar Progress="{Binding Roll, Converter={StaticResource ProgressConverter}, ConverterParameter=90}" 
-                                           ProgressColor="#FF9800"
-                                           HeightRequest="6"/>
-                            </VerticalStackLayout>
-                        </Border>
-
-                        <!-- Yaw -->
-                        <Border Grid.Column="2" Stroke="#333" Padding="15" StrokeThickness="1" BackgroundColor="#1a1a1a">
-                            <Border.StrokeShape>
-                                <RoundRectangle CornerRadius="8"/>
-                            </Border.StrokeShape>
-                            <VerticalStackLayout Spacing="5">
-                                <Label Text="Yaw" FontSize="14" TextColor="#888" HorizontalOptions="Center"/>
-                                <Label Text="{Binding Yaw, StringFormat='{0:F1}°'}" 
-                                       FontSize="28" 
-                                       FontAttributes="Bold" 
-                                       TextColor="#00BCD4" 
-                                       HorizontalOptions="Center"/>
-                                <ProgressBar Progress="{Binding Yaw, Converter={StaticResource ProgressConverter}, ConverterParameter=360}" 
-                                           ProgressColor="#00BCD4"
-                                           HeightRequest="6"/>
-                            </VerticalStackLayout>
-                        </Border>
+                        <VerticalStackLayout Grid.Column="2" Spacing="5">
+                            <Label Text="Yaw" FontSize="12" TextColor="#888" HorizontalOptions="Center"/>
+                            <Label Text="{Binding Yaw, StringFormat='{0:F1}°'}" 
+                                   FontSize="18" 
+                                   FontAttributes="Bold" 
+                                   TextColor="#00BCD4" 
+                                   HorizontalOptions="Center"/>
+                        </VerticalStackLayout>
                     </Grid>
                 </VerticalStackLayout>
             </Border>
