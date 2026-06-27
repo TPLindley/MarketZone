@@ -9,9 +9,8 @@ public class MockDataService
 {
     private readonly Random _random = new();
     private double _simulatedSpeed = 0;
-    private double _simulatedRpm = 800;
+    private double _simulatedRpm = 0;
     private double _simulatedThrottle = 0;
-    private bool _isAccelerating = true;
     private double _simulatedLatitude = 33.4484; // Phoenix, AZ
     private double _simulatedLongitude = -112.0740;
     private double _simulatedCourse = 0;
@@ -21,44 +20,26 @@ public class MockDataService
     /// </summary>
     public VehicleData GenerateMockVehicleData()
     {
-        // Simulate acceleration/deceleration cycle
-        if (_isAccelerating)
-        {
-            _simulatedSpeed += _random.NextDouble() * 2;
-            _simulatedRpm += _random.NextDouble() * 150;
-            _simulatedThrottle = Math.Min(100, _simulatedThrottle + _random.NextDouble() * 5);
+        // Gradually increase values, wrapping back to minimum when max reached
+        _simulatedRpm += 150;
+        if (_simulatedRpm > 6500) _simulatedRpm = 0;
 
-            if (_simulatedSpeed > 100)
-            {
-                _isAccelerating = false;
-            }
-        }
-        else
-        {
-            _simulatedSpeed -= _random.NextDouble() * 3;
-            _simulatedRpm -= _random.NextDouble() * 200;
-            _simulatedThrottle = Math.Max(0, _simulatedThrottle - _random.NextDouble() * 8);
+        _simulatedSpeed += 2;
+        if (_simulatedSpeed > 80) _simulatedSpeed = 0;
 
-            if (_simulatedSpeed < 20)
-            {
-                _isAccelerating = true;
-            }
-        }
-
-        // Keep values in realistic ranges
-        _simulatedSpeed = Math.Clamp(_simulatedSpeed, 0, 180);
-        _simulatedRpm = Math.Clamp(_simulatedRpm, 800, 6500);
+        _simulatedThrottle += 3;
+        if (_simulatedThrottle > 100) _simulatedThrottle = 0;
 
         return new VehicleData
         {
             Speed = _simulatedSpeed,
             Rpm = _simulatedRpm,
-            EngineLoad = Math.Min(100, (_simulatedRpm / 6500.0) * 100 + _random.NextDouble() * 10),
+            EngineLoad = Math.Min(100, _simulatedThrottle + _random.NextDouble() * 10),
             Throttle = _simulatedThrottle,
-            CoolantTemp = 85 + _random.NextDouble() * 10, // Normal operating temp
-            FuelLevel = 45 + _random.NextDouble() * 5, // Around half tank
-            BatteryVoltage = 13.8 + _random.NextDouble() * 0.4, // Normal charging voltage
-            FuelConsumption = (_simulatedSpeed > 0) ? (8 + _random.NextDouble() * 4) : 0,
+            CoolantTemp = 85 + _random.NextDouble() * 10,
+            FuelLevel = 45 + _random.NextDouble() * 5,
+            BatteryVoltage = 13.8 + _random.NextDouble() * 0.4,
+            FuelConsumption = 8 + _random.NextDouble() * 4,
             Timestamp = DateTime.Now
         };
     }
@@ -121,9 +102,8 @@ public class MockDataService
     public void Reset()
     {
         _simulatedSpeed = 0;
-        _simulatedRpm = 800;
+        _simulatedRpm = 0;
         _simulatedThrottle = 0;
-        _isAccelerating = true;
         _simulatedLatitude = 33.4484;
         _simulatedLongitude = -112.0740;
         _simulatedCourse = 0;
