@@ -107,11 +107,14 @@ static const std::string DEFAULT_HEADER_COLOR = BRAND_GRAPHIC_COLOR;
 static const std::string LEGACY_HEADER_COLOR  = "#FF1595";
 static const std::string DEFAULT_ORIENTATION  = "landscape";
 static const int DEFAULT_BLANK_INTERVAL_SECONDS = 300;
-static const double DEFAULT_BLANK_ANIMATION_SECONDS = 5.0;
+static const double DEFAULT_BLANK_ANIMATION_SECONDS = 3.0;
+static const double DEFAULT_BLANK_PAUSE_SECONDS = 2.0;
+static const double LEGACY_BLANK_ANIMATION_SECONDS = 5.0;
 
 struct BlankingConfig {
     int interval_seconds = DEFAULT_BLANK_INTERVAL_SECONDS;
     double animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+    double pause_seconds = DEFAULT_BLANK_PAUSE_SECONDS;
 };
 
 static BlankingConfig normalize_blanking_config(const BlankingConfig& cfg)
@@ -121,6 +124,8 @@ static BlankingConfig normalize_blanking_config(const BlankingConfig& cfg)
         normalized.interval_seconds = DEFAULT_BLANK_INTERVAL_SECONDS;
     if (normalized.animation_seconds <= 0.0)
         normalized.animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+    if (normalized.pause_seconds < 0.0)
+        normalized.pause_seconds = DEFAULT_BLANK_PAUSE_SECONDS;
     return normalized;
 }
 
@@ -199,11 +204,13 @@ static void save_blanking_config(const BlankingConfig& cfg)
     BlankingConfig normalized = normalize_blanking_config(cfg);
     log("INFO", "Saving blanking config: interval="
         + std::to_string(normalized.interval_seconds)
-        + "s animation=" + std::to_string(normalized.animation_seconds) + "s");
+        + "s animation=" + std::to_string(normalized.animation_seconds)
+        + "s pause=" + std::to_string(normalized.pause_seconds) + "s");
 
     json obj = {
         {"interval_seconds", normalized.interval_seconds},
-        {"animation_seconds", normalized.animation_seconds}
+        {"animation_seconds", normalized.animation_seconds},
+        {"pause_seconds", normalized.pause_seconds}
     };
     std::ofstream f(blanking_file_path());
     f << obj.dump(2);
@@ -222,10 +229,23 @@ static BlankingConfig load_blanking_config()
         BlankingConfig cfg;
         cfg.interval_seconds = obj.value("interval_seconds", DEFAULT_BLANK_INTERVAL_SECONDS);
         cfg.animation_seconds = obj.value("animation_seconds", DEFAULT_BLANK_ANIMATION_SECONDS);
+        cfg.pause_seconds = obj.value("pause_seconds", DEFAULT_BLANK_PAUSE_SECONDS);
+
+        bool migrated_legacy_animation = false;
+        if (std::abs(cfg.animation_seconds - LEGACY_BLANK_ANIMATION_SECONDS) < 0.0001) {
+            cfg.animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+            migrated_legacy_animation = true;
+        }
+
         cfg = normalize_blanking_config(cfg);
         log("INFO", "Loaded blanking config: interval="
             + std::to_string(cfg.interval_seconds)
-            + "s animation=" + std::to_string(cfg.animation_seconds) + "s");
+            + "s animation=" + std::to_string(cfg.animation_seconds)
+            + "s pause=" + std::to_string(cfg.pause_seconds) + "s");
+
+        if (migrated_legacy_animation)
+            save_blanking_config(cfg);
+
         return cfg;
     } catch (...) {
         log("WARN", "Failed to parse blanking config, using defaults");
@@ -618,7 +638,7 @@ static bool update_blanking_animation()
             should_queue_draw = true;
 
             std::chrono::duration<double> elapsed = now - g_blanking_started_at;
-            if (elapsed.count() >= g_blanking_config.animation_seconds) {
+            if (elapsed.count() >= (g_blanking_config.animation_seconds + g_blanking_config.pause_seconds)) {
                 g_blanking_active = false;
                 should_be_visible = false;
                 g_next_blank_time = now + std::chrono::seconds(g_blanking_config.interval_seconds);
@@ -1084,13 +1104,14 @@ static void run_api_server()
         }
         json obj = {
             {"interval_seconds", cfg.interval_seconds},
-            {"animation_seconds", cfg.animation_seconds}
+            {"animation_seconds", cfg.animation_seconds},
+            {"pause_seconds", cfg.pause_seconds}
         };
         res.set_content(obj.dump(2), "application/json");
     });
 
     // POST /blanking — set timer/animation configuration
-    // Body: {"interval_seconds":300,"animation_seconds":5.0}
+    // Body: {"interval_seconds":300,"animation_seconds":3.0,"pause_seconds":2.0}
     svr.Post("/blanking", [](const httplib::Request& req, httplib::Response& res) {
         log("HTTP", "POST /blanking from " + req.remote_addr + " body=" + req.body);
         try {
@@ -1121,6 +1142,16 @@ static void run_api_server()
                 cfg.animation_seconds = animation;
             }
 
+            if (obj.contains("pause_seconds")) {
+                double pause = obj.value("pause_seconds", cfg.pause_seconds);
+                if (pause < 0.0) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"pause_seconds must be >= 0\"}", "application/json");
+                    return;
+                }
+                cfg.pause_seconds = pause;
+            }
+
             cfg = normalize_blanking_config(cfg);
 
             {
@@ -1135,7 +1166,8 @@ static void run_api_server()
             json out = {
                 {"status", "ok"},
                 {"interval_seconds", cfg.interval_seconds},
-                {"animation_seconds", cfg.animation_seconds}
+                {"animation_seconds", cfg.animation_seconds},
+                {"pause_seconds", cfg.pause_seconds}
             };
             res.set_content(out.dump(2), "application/json");
         } catch (const std::exception& e) {
@@ -1356,6 +1388,7 @@ int main(int argc, char* argv[])
 
         double elapsed_seconds = 0.0;
         double animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+        bool portrait = false;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             if (!g_blanking_active)
@@ -1365,6 +1398,7 @@ int main(int argc, char* argv[])
                 std::chrono::steady_clock::now() - g_blanking_started_at;
             elapsed_seconds = elapsed.count();
             animation_seconds = g_blanking_config.animation_seconds;
+            portrait = (g_orientation == "portrait");
         }
 
         if (animation_seconds <= 0.0)
@@ -1373,15 +1407,17 @@ int main(int argc, char* argv[])
         double t = std::clamp(elapsed_seconds / animation_seconds, 0.0, 1.0);
         double eased = 1.0 - std::pow(1.0 - t, 3.0);
         double scale = 0.15 + 0.85 * eased;
-        double rotation = (1.0 - eased) * 5.0 * PI;
+        double tumble_rotation = (1.0 - eased) * 5.0 * PI;
+        double orientation_rotation = portrait ? (-PI / 2.0) : 0.0;
 
         cr->save();
         cr->translate(w / 2.0, h / 2.0);
-        cr->rotate(rotation);
+        // Settle into the display's orientation while tumbling into place.
+        cr->rotate(orientation_rotation + tumble_rotation);
         cr->scale(scale, scale);
 
         if (g_separator_svg_handle && g_separator_svg_w > 0.0 && g_separator_svg_h > 0.0) {
-            double target_w = std::min(static_cast<double>(w) * 0.75, 1200.0);
+            double target_w = std::min(static_cast<double>(portrait ? h : w) * 0.75, 1200.0);
             double fit = target_w / g_separator_svg_w;
 
             cr->scale(fit, fit);
