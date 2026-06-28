@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Windows.Input;
 using mzConfigure.Models;
 using mzConfigure.Services;
@@ -21,6 +22,7 @@ public class MainViewModel : INotifyPropertyChanged
     private string _headerColor = "#FFFFFF";
     private bool _isPortrait;
     private bool _isLoadingOrientation;
+    private bool _showMoreOptions;
 
     public MainViewModel() : this(new DialogService(), new WiFiService())
     {
@@ -52,6 +54,10 @@ public class MainViewModel : INotifyPropertyChanged
         LoadFromLibraryCommand = new Command(async () => await LoadFromLibrary());
         MoveUpCommand = new Command<Special>(MoveUp);
         MoveDownCommand = new Command<Special>(MoveDown);
+        ToggleMoreOptionsCommand = new Command(ToggleMoreOptions);
+        TestAnimationCommand = new Command(async () => await TestAnimation());
+        DiagnosticCommand = new Command(async () => await ShowDiagnostics());
+        ToggleOrientationCommand = new Command(async () => await ToggleOrientation());
 
         // Auto-connect and load on startup
         _ = InitializeAsync();
@@ -170,7 +176,7 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    public string PageTitle => _isConnected ? $"{_headerText} Config" : "MarketZone Config";
+    public string PageTitle => _isConnected ? $"{_headerText} [Config]" : "MarketZone [Config]";
 
     public bool IsPortrait
     {
@@ -190,6 +196,19 @@ public class MainViewModel : INotifyPropertyChanged
     }
 
     public string OrientationText => _isPortrait ? "Portrait" : "Landscape";
+
+    public bool ShowMoreOptions
+    {
+        get => _showMoreOptions;
+        set
+        {
+            _showMoreOptions = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowMoreButtonText));
+        }
+    }
+
+    public string ShowMoreButtonText => _showMoreOptions ? "▲" : "▼";
 
     public Microsoft.Maui.Graphics.Color PageTitleColor
     {
@@ -228,6 +247,10 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand LoadFromLibraryCommand { get; }
     public ICommand MoveUpCommand { get; }
     public ICommand MoveDownCommand { get; }
+    public ICommand ToggleMoreOptionsCommand { get; }
+    public ICommand TestAnimationCommand { get; }
+    public ICommand DiagnosticCommand { get; }
+    public ICommand ToggleOrientationCommand { get; }
 
     private async Task LoadSpecials()
     {
@@ -242,6 +265,9 @@ public class MainViewModel : INotifyPropertyChanged
             {
                 Specials.Add(special);
             }
+
+            // Keep local library persistent and in sync with what exists on the display.
+            await _libraryService.AddToLibraryAsync(specials);
 
             // Update header text and color to match the display when connected
             if (_isConnected)
@@ -595,6 +621,18 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task ToggleOrientation()
+    {
+        if (!_isConnected)
+        {
+            await _dialogService.ShowAlertAsync("Not Connected", "Please connect to the Raspberry Pi first.");
+            return;
+        }
+
+        // Toggle the orientation
+        IsPortrait = !IsPortrait;
+    }
+
     private async Task UpdateOrientation()
     {
         IsLoading = true;
@@ -893,6 +931,67 @@ public class MainViewModel : INotifyPropertyChanged
             RaspberryPiUrl = newUrl;
             Status = $"Auto-detected PI at {workingIp}";
         }
+    }
+
+    private void ToggleMoreOptions()
+    {
+        ShowMoreOptions = !ShowMoreOptions;
+    }
+
+    private async Task TestAnimation()
+    {
+        if (!_isConnected)
+        {
+            await _dialogService.ShowAlertAsync("Not Connected", "Please connect to the Raspberry Pi first.");
+            return;
+        }
+
+        Status = "Triggering animation...";
+        IsLoading = true;
+
+        try
+        {
+            await _apiService.TriggerAnimationAsync();
+            Status = "Animation triggered successfully";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Animation test failed: {ex.Message}";
+            await _dialogService.ShowAlertAsync("Error", $"Failed to trigger animation: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task ShowDiagnostics()
+    {
+        // Build diagnostic information
+        var diagnosticInfo = new StringBuilder();
+        diagnosticInfo.AppendLine($"Connection Status: {(_isConnected ? "Connected" : "Disconnected")}");
+        diagnosticInfo.AppendLine($"URL: {_raspberryPiUrl}");
+        diagnosticInfo.AppendLine($"Specials Count: {Specials.Count}");
+        diagnosticInfo.AppendLine($"Header: {_headerText}");
+        diagnosticInfo.AppendLine($"Orientation: {OrientationText}");
+        diagnosticInfo.AppendLine($"Platform: {DeviceInfo.Platform}");
+        diagnosticInfo.AppendLine($"Device Type: {DeviceInfo.DeviceType}");
+
+        if (_isConnected)
+        {
+            diagnosticInfo.AppendLine("\nTesting connection...");
+            try
+            {
+                var canConnect = await _apiService.TestConnectionAsync();
+                diagnosticInfo.AppendLine($"Connection Test: {(canConnect ? "✓ Success" : "✗ Failed")}");
+            }
+            catch (Exception ex)
+            {
+                diagnosticInfo.AppendLine($"Connection Test: ✗ Error - {ex.Message}");
+            }
+        }
+
+        await _dialogService.ShowAlertAsync("Diagnostics", diagnosticInfo.ToString());
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -32,6 +32,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
             response.EnsureSuccessStatusCode();
             
@@ -51,6 +52,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.DeleteAsync($"{_baseUrl}/specials");
             response.EnsureSuccessStatusCode();
         }
@@ -67,6 +69,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var json = JsonSerializer.Serialize(specials);
 
             var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -109,6 +112,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
             return response.IsSuccessStatusCode;
         }
@@ -125,6 +129,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/header");
             response.EnsureSuccessStatusCode();
 
@@ -144,6 +149,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var payload = new { text, color };
             var json = JsonSerializer.Serialize(payload);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -164,6 +170,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/orientation");
             response.EnsureSuccessStatusCode();
 
@@ -183,6 +190,7 @@ public class SpecialsApiService
     {
         try
         {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
             var payload = new OrientationInfo { Orientation = NormalizeOrientation(orientation) };
             var json = JsonSerializer.Serialize(payload);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -201,6 +209,24 @@ public class SpecialsApiService
         return string.Equals(orientation, "portrait", StringComparison.OrdinalIgnoreCase)
             ? "portrait"
             : "landscape";
+    }
+
+    /// <summary>
+    /// POST /blanking/trigger - Trigger screen animation test
+    /// </summary>
+    public async Task<bool> TriggerAnimationAsync()
+    {
+        try
+        {
+            ApiAuthService.ApplyTokenHeader(_httpClient);
+            var response = await _httpClient.PostAsync($"{_baseUrl}/blanking/trigger", null);
+            response.EnsureSuccessStatusCode();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to trigger animation: {ex.Message}", ex);
+        }
     }
 
     public class HeaderInfo
