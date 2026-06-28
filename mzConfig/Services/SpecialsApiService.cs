@@ -35,14 +35,22 @@ public class SpecialsApiService
             ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
             response.EnsureSuccessStatusCode();
-            
-            var specials = await response.Content.ReadFromJsonAsync<List<Special>>();
-            return specials ?? new List<Special>();
+
+            var wrapper = await response.Content.ReadFromJsonAsync<SpecialsResponse>();
+            return wrapper?.Specials ?? new List<Special>();
         }
         catch (Exception ex)
         {
             throw new Exception($"Failed to retrieve specials: {ex.Message}", ex);
         }
+    }
+
+    private class SpecialsResponse
+    {
+        [JsonPropertyName("specials")]
+        public List<Special> Specials { get; set; } = new();
+        [JsonPropertyName("version")]
+        public string Version { get; set; } = string.Empty;
     }
 
     /// <summary>

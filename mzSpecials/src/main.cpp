@@ -45,6 +45,12 @@ static void log(const std::string& level, const std::string& msg)
 static const int API_PORT = 8765;
 static const std::string DEFAULT_API_TOKEN = "rpbs$best-cinnamon-buns-ever$";
 
+// --- Version ---
+static const int APP_VERSION_MAJOR = MZSPECIALS_VERSION_MAJOR;
+static const int APP_VERSION_MINOR = MZSPECIALS_VERSION_MINOR;
+static const int APP_VERSION_BUILD = MZSPECIALS_VERSION_PATCH;
+static const std::string APP_VERSION = MZSPECIALS_VERSION;
+
 // --- Scroll speed ---
 static const double SCROLL_SPEED = 40.0;
 static const int PORTRAIT_SPECIAL_WIDTH = 92;
@@ -932,6 +938,20 @@ static void schedule_scroll_evaluations(int count)
 }
 
 // -----------------------------------------------------------------------
+// HTTP response helpers — every response carries the server version
+// -----------------------------------------------------------------------
+static void set_json(httplib::Response& res, json obj)
+{
+    obj["version"] = APP_VERSION;
+    res.set_content(obj.dump(2), "application/json");
+}
+
+static std::string error_json(const std::string& msg)
+{
+    return json{{"error", msg}, {"version", APP_VERSION}}.dump(2);
+}
+
+// -----------------------------------------------------------------------
 // HTTP API server (runs in a background thread)
 // -----------------------------------------------------------------------
 static void run_api_server()
@@ -944,7 +964,7 @@ static void run_api_server()
 
         log("WARN", "Unauthorized request to " + req.path + " from " + req.remote_addr);
         res.status = 401;
-        res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+        res.set_content(error_json("unauthorized"), "application/json");
         return httplib::Server::HandlerResponse::Handled;
     });
 
@@ -958,7 +978,7 @@ static void run_api_server()
             color = g_header_color;
         }
         json obj = {{"text", text}, {"color", color}};
-        res.set_content(obj.dump(2), "application/json");
+        set_json(res, obj);
         log("HTTP", "GET /header -> text=\"" + text + "\" color=" + color);
     });
 
@@ -971,7 +991,7 @@ static void run_api_server()
             orientation = g_orientation;
         }
         json obj = {{"orientation", orientation}};
-        res.set_content(obj.dump(2), "application/json");
+        set_json(res, obj);
         log("HTTP", "GET /orientation -> " + orientation);
     });
 
@@ -984,7 +1004,7 @@ static void run_api_server()
             if (!obj.contains("orientation")) {
                 log("WARN", "POST /orientation missing orientation field");
                 res.status = 400;
-                res.set_content("{\"error\":\"orientation field required\"}", "application/json");
+                res.set_content(error_json("orientation field required"), "application/json");
                 return;
             }
 
@@ -996,13 +1016,11 @@ static void run_api_server()
             save_orientation(orientation);
             schedule_orientation_update();
             log("HTTP", "POST /orientation -> set to " + orientation);
-            res.set_content(
-                (json{{"status", "ok"}, {"orientation", orientation}}).dump(2),
-                "application/json");
+            set_json(res, {{"status", "ok"}, {"orientation", orientation}});
         } catch (const std::exception& e) {
             log("ERROR", std::string("POST /orientation exception: ") + e.what());
             res.status = 400;
-            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+            res.set_content(error_json(e.what()), "application/json");
         }
     });
 
@@ -1017,7 +1035,7 @@ static void run_api_server()
             if (text.empty() && color.empty()) {
                 log("WARN", "POST /header missing text and color fields");
                 res.status = 400;
-                res.set_content("{\"error\":\"text or color field required\"}", "application/json");
+                res.set_content(error_json("text or color field required"), "application/json");
                 return;
             }
             {
@@ -1028,11 +1046,11 @@ static void run_api_server()
             save_header(g_header_text, g_header_color);
             schedule_header_update();
             log("HTTP", "POST /header -> ok");
-            res.set_content("{\"status\":\"ok\"}", "application/json");
+            set_json(res, {{"status", "ok"}});
         } catch (const std::exception& e) {
             log("ERROR", std::string("POST /header exception: ") + e.what());
             res.status = 400;
-            res.set_content(std::string("{\"error\":\"")+e.what()+"\"}", "application/json");
+            res.set_content(error_json(e.what()), "application/json");
         }
     });
 
@@ -1047,7 +1065,7 @@ static void run_api_server()
                 arr.push_back({{"text", s.text}, {"color", s.color_hex}});
             count = g_specials.size();
         }
-        res.set_content(arr.dump(2), "application/json");
+        set_json(res, {{"specials", arr}});
         log("HTTP", "GET /specials -> returned " + std::to_string(count) + " items");
     });
 
@@ -1061,7 +1079,7 @@ static void run_api_server()
         save_specials({});
         schedule_rebuild();
         log("HTTP", "DELETE /specials -> cleared");
-        res.set_content("{\"status\":\"cleared\"}", "application/json");
+        set_json(res, {{"status", "cleared"}});
     });
 
     // POST /specials — replace the list
@@ -1085,12 +1103,11 @@ static void run_api_server()
             save_specials(newlist);
             schedule_rebuild();
             log("HTTP", "POST /specials -> accepted " + std::to_string(newlist.size()) + " items");
-            res.set_content("{\"status\":\"ok\",\"count\":" +
-                            std::to_string(newlist.size()) + "}", "application/json");
+            set_json(res, {{"status", "ok"}, {"count", (int)newlist.size()}});
         } catch (const std::exception& e) {
             log("ERROR", std::string("POST /specials exception: ") + e.what());
             res.status = 400;
-            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+            res.set_content(error_json(e.what()), "application/json");
         }
     });
 
@@ -1107,7 +1124,7 @@ static void run_api_server()
             {"animation_seconds", cfg.animation_seconds},
             {"pause_seconds", cfg.pause_seconds}
         };
-        res.set_content(obj.dump(2), "application/json");
+        set_json(res, obj);
     });
 
     // POST /blanking — set timer/animation configuration
@@ -1126,7 +1143,7 @@ static void run_api_server()
                 int interval = obj.value("interval_seconds", cfg.interval_seconds);
                 if (interval <= 0) {
                     res.status = 400;
-                    res.set_content("{\"error\":\"interval_seconds must be > 0\"}", "application/json");
+                    res.set_content(error_json("interval_seconds must be > 0"), "application/json");
                     return;
                 }
                 cfg.interval_seconds = interval;
@@ -1136,7 +1153,7 @@ static void run_api_server()
                 double animation = obj.value("animation_seconds", cfg.animation_seconds);
                 if (animation <= 0.0) {
                     res.status = 400;
-                    res.set_content("{\"error\":\"animation_seconds must be > 0\"}", "application/json");
+                    res.set_content(error_json("animation_seconds must be > 0"), "application/json");
                     return;
                 }
                 cfg.animation_seconds = animation;
@@ -1146,7 +1163,7 @@ static void run_api_server()
                 double pause = obj.value("pause_seconds", cfg.pause_seconds);
                 if (pause < 0.0) {
                     res.status = 400;
-                    res.set_content("{\"error\":\"pause_seconds must be >= 0\"}", "application/json");
+                    res.set_content(error_json("pause_seconds must be >= 0"), "application/json");
                     return;
                 }
                 cfg.pause_seconds = pause;
@@ -1169,11 +1186,11 @@ static void run_api_server()
                 {"animation_seconds", cfg.animation_seconds},
                 {"pause_seconds", cfg.pause_seconds}
             };
-            res.set_content(out.dump(2), "application/json");
+            set_json(res, out);
         } catch (const std::exception& e) {
             log("ERROR", std::string("POST /blanking exception: ") + e.what());
             res.status = 400;
-            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+            res.set_content(error_json(e.what()), "application/json");
         }
     });
 
@@ -1195,7 +1212,7 @@ static void run_api_server()
             }
         });
 
-        res.set_content("{\"status\":\"ok\",\"triggered\":true}", "application/json");
+        set_json(res, {{"status", "ok"}, {"triggered", true}});
     });
 
     if (!svr.bind_to_port("0.0.0.0", API_PORT)) {
@@ -1214,7 +1231,7 @@ static void run_api_server()
 // -----------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    log("INFO", "mzSpecials starting up");
+    log("INFO", "mzSpecials v" + APP_VERSION + " starting up");
     auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.mzSpecials");
 
     {
