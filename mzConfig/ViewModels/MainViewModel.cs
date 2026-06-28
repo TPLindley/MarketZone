@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows.Input;
@@ -30,14 +31,16 @@ public class MainViewModel : INotifyPropertyChanged
 
     public MainViewModel(IDialogService dialogService, IWiFiService wifiService)
     {
+        Log.Separator("MainViewModel: Initializing");
         _dialogService = dialogService;
         _wifiService = wifiService;
         _apiService = new SpecialsApiService();
         _libraryService = new SpecialsLibraryService();
 
         // Load saved URL from preferences
-        _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://raspberrypi.local:8765");
+        _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://10.42.0.1:8765");
         _apiService.BaseUrl = _raspberryPiUrl;
+        Log.Info($"Loaded saved URL: {_raspberryPiUrl}");
 
         Specials = new ObservableCollection<Special>();
 
@@ -190,12 +193,12 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(OrientationText));
 
-            if (_isConnected && !_isLoadingOrientation)
-                _ = UpdateOrientation();
+            // Don't auto-update during loading or manual toggle (ToggleOrientation handles API call)
+            // Only auto-update if this is being set from external source (like initial load)
         }
     }
 
-    public string OrientationText => _isPortrait ? "Portrait" : "Landscape";
+    public string OrientationText => _isPortrait ? "Land" : "Port";
 
     public bool ShowMoreOptions
     {
@@ -254,57 +257,75 @@ public class MainViewModel : INotifyPropertyChanged
 
     private async Task LoadSpecials()
     {
+        Log.Separator("LoadSpecials: Starting");
         IsLoading = true;
         Status = "Loading specials...";
 
         try
         {
+            Log.Info($"Fetching specials from {_raspberryPiUrl}");
             var specials = await _apiService.GetSpecialsAsync();
+            Log.Info($"Received {specials.Count} specials from API");
+
             Specials.Clear();
             foreach (var special in specials)
             {
+                Log.Debug($"  - Special: '{special.Text}' (Color: {special.Color})");
                 Specials.Add(special);
             }
 
             // Keep local library persistent and in sync with what exists on the display.
             await _libraryService.AddToLibraryAsync(specials);
+            Log.Info($"Updated library with {specials.Count} specials");
 
             // Update header text and color to match the display when connected
             if (_isConnected)
             {
+                Log.Info("Fetching header information...");
                 try
                 {
                     var header = await _apiService.GetHeaderAsync();
                     HeaderText = string.IsNullOrWhiteSpace(header.Text) ? "Rolling Pin Bakery" : header.Text;
                     HeaderColor = string.IsNullOrWhiteSpace(header.Color) ? "#FFFFFF" : header.Color;
+                    Log.Info($"Header loaded - Text: '{HeaderText}', Color: {HeaderColor}");
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Log.Warning($"Failed to load header - {ex.Message}");
                     // Fallback to defaults if header endpoint fails
                     HeaderText = "Rolling Pin Bakery";
                     HeaderColor = "#FFFFFF";
                 }
 
+                Log.Info("Fetching orientation...");
                 try
                 {
                     var orientation = await _apiService.GetOrientationAsync();
                     _isLoadingOrientation = true;
-                    IsPortrait = orientation == "portrait";
+                    _isPortrait = orientation == "portrait";
+                    OnPropertyChanged(nameof(IsPortrait));
+                    OnPropertyChanged(nameof(OrientationText));
                     _isLoadingOrientation = false;
+                    Log.Info($"Orientation loaded - {orientation} (IsPortrait: {_isPortrait}, Button shows: {OrientationText})");
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Log.Warning($"Failed to load orientation - {ex.Message}, defaulting to landscape");
                     // Default orientation is landscape if the endpoint is unavailable.
                     _isLoadingOrientation = true;
-                    IsPortrait = false;
+                    _isPortrait = false;
+                    OnPropertyChanged(nameof(IsPortrait));
+                    OnPropertyChanged(nameof(OrientationText));
                     _isLoadingOrientation = false;
                 }
             }
 
             Status = $"Loaded {specials.Count} specials";
+            Log.Separator($"LoadSpecials: Completed successfully - {specials.Count} specials");
         }
         catch (Exception ex)
         {
+            Log.Exception(ex, "LoadSpecials: FAILED");
             Status = $"Error: {ex.Message}";
             await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
@@ -345,26 +366,37 @@ public class MainViewModel : INotifyPropertyChanged
 
     private async Task UpdateSpecials()
     {
+        Log.Separator("UpdateSpecials: Starting");
         if (Specials.Count == 0)
         {
+            Log.Info("No specials to update");
             await _dialogService.ShowAlertAsync("Info", "No specials to update");
             return;
         }
 
         IsLoading = true;
         Status = "Updating specials...";
+        Log.Info($"Sending {Specials.Count} specials to PI");
+        foreach (var special in Specials)
+        {
+            Log.Debug($"  - '{special.Text}' (Color: {special.Color})");
+        }
 
         try
         {
             var count = await _apiService.UpdateSpecialsAsync(Specials.ToList());
+            Log.Info($"API confirmed {count} specials updated");
 
             // Save to library (will filter duplicates automatically)
             await _libraryService.AddToLibraryAsync(Specials.ToList());
+            Log.Info($"Library updated with {Specials.Count} specials");
 
             Status = $"Updated {count} specials";
+            Log.Separator("UpdateSpecials: Success");
         }
         catch (Exception ex)
         {
+            Log.Exception(ex, "UpdateSpecials: FAILED");
             Status = $"Error: {ex.Message}";
             await _dialogService.ShowAlertAsync("Error", ex.Message);
         }
@@ -555,6 +587,7 @@ public class MainViewModel : INotifyPropertyChanged
         // If already connected, disconnect
         if (_isConnected)
         {
+            Log.Separator("ShowConnectDialog: Disconnecting");
             IsConnected = false;
             Status = "Disconnected";
             Specials.Clear();
@@ -563,12 +596,14 @@ public class MainViewModel : INotifyPropertyChanged
             _isLoadingOrientation = true;
             IsPortrait = false;
             _isLoadingOrientation = false;
+            Log.Info("Disconnected and cleared all data");
             return;
         }
 
         // Show connect dialog
         try
         {
+            Log.Separator("ShowConnectDialog: Prompting for connection");
             var currentPage = GetCurrentPage();
             if (currentPage == null) return;
 
@@ -576,35 +611,46 @@ public class MainViewModel : INotifyPropertyChanged
                 "Connect to Raspberry Pi",
                 "Enter the URL for your Raspberry Pi:",
                 initialValue: _raspberryPiUrl,
-                placeholder: "http://raspberrypi.local:8765",
+                placeholder: "http://10.42.0.1:8765",
                 accept: "Save",
                 cancel: "Cancel",
                 keyboard: Keyboard.Url);
 
             if (!string.IsNullOrWhiteSpace(result))
             {
-                RaspberryPiUrl = result;
+                Log.Info($"User entered URL: {result}");
+                // Process the input to ensure proper format
+                var processedUrl = ProcessConnectionUrl(result);
+                Log.Info($"Processed URL: {processedUrl}");
+
+                RaspberryPiUrl = processedUrl;
                 Status = "Connecting...";
                 IsLoading = true;
 
                 try
                 {
+                    Log.Info($"Testing connection to {processedUrl}...");
                     var isConnected = await _apiService.TestConnectionAsync();
                     IsConnected = isConnected;
+                    Log.Info($"Connection test result: {isConnected}");
 
                     if (isConnected)
                     {
+                        Log.Info("Connection successful, loading data from PI...");
                         Status = "Connected. Loading specials...";
                         await LoadSpecials();
+                        Log.Separator("ShowConnectDialog: Connection complete");
                     }
                     else
                     {
+                        Log.Warning("Connection test returned false");
                         Status = "Connection failed. Check URL and try again.";
                         await _dialogService.ShowAlertAsync("Connection Failed", "Could not connect to the Raspberry Pi. Please check the URL and try again.");
                     }
                 }
                 catch (Exception ex)
                 {
+                    Log.Exception(ex, "ShowConnectDialog: Connection FAILED");
                     IsConnected = false;
                     Status = $"Error: {ex.Message}";
                     await _dialogService.ShowAlertAsync("Error", ex.Message);
@@ -614,23 +660,97 @@ public class MainViewModel : INotifyPropertyChanged
                     IsLoading = false;
                 }
             }
+            else
+            {
+                Log.Info("User cancelled connection dialog");
+            }
         }
         catch (Exception ex)
         {
+            Log.Exception(ex, "ShowConnectDialog: Dialog ERROR");
             await _dialogService.ShowAlertAsync("Error", $"Failed to show connection dialog: {ex.Message}");
         }
     }
 
+    private string ProcessConnectionUrl(string input)
+    {
+        // Remove any whitespace
+        input = input.Trim();
+
+        // If it's already a complete URL with protocol and port, return as is
+        if (input.StartsWith("http://") || input.StartsWith("https://"))
+        {
+            // Check if it has a port
+            var uri = new Uri(input);
+            if (uri.Port == 80 || uri.Port == 443) // Default HTTP/HTTPS ports
+            {
+                // Add explicit port 8765
+                return $"{uri.Scheme}://{uri.Host}:8765{uri.PathAndQuery}";
+            }
+            return input;
+        }
+
+        // If it looks like just an IP address (e.g., "10.42.0.1" or "192.168.1.1")
+        if (System.Net.IPAddress.TryParse(input, out _))
+        {
+            return $"http://{input}:8765";
+        }
+
+        // If it has a port but no protocol (e.g., "10.42.0.1:8765")
+        if (input.Contains(':') && !input.Contains("://"))
+        {
+            return $"http://{input}";
+        }
+
+        // If it's a hostname without protocol (e.g., "raspberrypi.local")
+        if (!input.Contains(':'))
+        {
+            return $"http://{input}:8765";
+        }
+
+        // Default: assume it's a hostname with port
+        return $"http://{input}";
+    }
+
     private async Task ToggleOrientation()
     {
+        Log.Separator("ToggleOrientation: Starting");
         if (!_isConnected)
         {
+            Log.Info("Not connected, showing alert");
             await _dialogService.ShowAlertAsync("Not Connected", "Please connect to the Raspberry Pi first.");
             return;
         }
 
-        // Toggle the orientation
-        IsPortrait = !IsPortrait;
+        try
+        {
+            IsLoading = true;
+            Status = "Toggling orientation...";
+
+            // Toggle the orientation
+            var newOrientation = !_isPortrait;
+            var orientationText = newOrientation ? "portrait" : "landscape";
+            Log.Info($"Current={(_isPortrait ? "portrait" : "landscape")}, New={orientationText}");
+
+            // Send to API
+            Log.Info($"Sending API call to set orientation to {orientationText}");
+            await _apiService.SetOrientationAsync(orientationText);
+
+            // Update local state only after successful API call
+            IsPortrait = newOrientation;
+            Status = $"Orientation set to {OrientationText}";
+            Log.Separator($"ToggleOrientation: Success - Button now shows '{OrientationText}'");
+        }
+        catch (Exception ex)
+        {
+            Log.Exception(ex, "ToggleOrientation: FAILED");
+            Status = $"Error: {ex.Message}";
+            await _dialogService.ShowAlertAsync("Error", $"Failed to toggle orientation: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     private async Task UpdateOrientation()
@@ -940,8 +1060,10 @@ public class MainViewModel : INotifyPropertyChanged
 
     private async Task TestAnimation()
     {
+        Log.Separator("TestAnimation: Starting");
         if (!_isConnected)
         {
+            Log.Info("Not connected, showing alert");
             await _dialogService.ShowAlertAsync("Not Connected", "Please connect to the Raspberry Pi first.");
             return;
         }
@@ -951,11 +1073,14 @@ public class MainViewModel : INotifyPropertyChanged
 
         try
         {
+            Log.Info($"Sending POST request to {_raspberryPiUrl}/blanking/trigger");
             await _apiService.TriggerAnimationAsync();
             Status = "Animation triggered successfully";
+            Log.Separator("TestAnimation: Success");
         }
         catch (Exception ex)
         {
+            Log.Exception(ex, "TestAnimation: FAILED");
             Status = $"Animation test failed: {ex.Message}";
             await _dialogService.ShowAlertAsync("Error", $"Failed to trigger animation: {ex.Message}");
         }
@@ -967,31 +1092,375 @@ public class MainViewModel : INotifyPropertyChanged
 
     private async Task ShowDiagnostics()
     {
-        // Build diagnostic information
-        var diagnosticInfo = new StringBuilder();
-        diagnosticInfo.AppendLine($"Connection Status: {(_isConnected ? "Connected" : "Disconnected")}");
-        diagnosticInfo.AppendLine($"URL: {_raspberryPiUrl}");
-        diagnosticInfo.AppendLine($"Specials Count: {Specials.Count}");
-        diagnosticInfo.AppendLine($"Header: {_headerText}");
-        diagnosticInfo.AppendLine($"Orientation: {OrientationText}");
-        diagnosticInfo.AppendLine($"Platform: {DeviceInfo.Platform}");
-        diagnosticInfo.AppendLine($"Device Type: {DeviceInfo.DeviceType}");
+        Status = "Running diagnostics...";
+        IsLoading = true;
 
-        if (_isConnected)
+        try
         {
-            diagnosticInfo.AppendLine("\nTesting connection...");
+            // Build diagnostic information
+            var diagnosticInfo = new StringBuilder();
+            diagnosticInfo.AppendLine("DIAGNOSTIC TEST SUMMARY:");
+            diagnosticInfo.AppendLine("• DNS Test: Can the hostname be found?");
+            diagnosticInfo.AppendLine("• Ping Test: Is the device responding?");
+            diagnosticInfo.AppendLine("• TCP Test: Can we reach the port?");
+            diagnosticInfo.AppendLine("• HTTP Test: Can the API respond?");
+            diagnosticInfo.AppendLine("");
+
+            diagnosticInfo.AppendLine("=== DEVICE INFO ===");
+            diagnosticInfo.AppendLine($"Platform: {DeviceInfo.Platform}");
+            diagnosticInfo.AppendLine($"Device Type: {DeviceInfo.DeviceType}");
+            diagnosticInfo.AppendLine($"Model: {DeviceInfo.Model}");
+            diagnosticInfo.AppendLine($"Version: {DeviceInfo.VersionString}");
+
+            // Get current device IP address (excluding loopback)
             try
             {
-                var canConnect = await _apiService.TestConnectionAsync();
-                diagnosticInfo.AppendLine($"Connection Test: {(canConnect ? "✓ Success" : "✗ Failed")}");
-            }
-            catch (Exception ex)
-            {
-                diagnosticInfo.AppendLine($"Connection Test: ✗ Error - {ex.Message}");
-            }
-        }
+                var hostName = System.Net.Dns.GetHostName();
+                var addresses = await System.Net.Dns.GetHostAddressesAsync(hostName);
+                var ipv4Address = addresses.FirstOrDefault(a => 
+                    a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                    !System.Net.IPAddress.IsLoopback(a));
 
-        await _dialogService.ShowAlertAsync("Diagnostics", diagnosticInfo.ToString());
+                if (ipv4Address != null)
+                {
+                    diagnosticInfo.AppendLine($"Device IP: {ipv4Address}");
+                }
+                else
+                {
+                    diagnosticInfo.AppendLine("Device IP: Not available");
+                }
+            }
+            catch
+            {
+                diagnosticInfo.AppendLine("Device IP: Unable to determine");
+            }
+
+            diagnosticInfo.AppendLine("\n=== APP STATUS ===");
+            diagnosticInfo.AppendLine($"Connection Status: {(_isConnected ? "Connected" : "Disconnected")}");
+            diagnosticInfo.AppendLine($"Target URL: {_raspberryPiUrl}");
+            diagnosticInfo.AppendLine($"Specials Count: {Specials.Count}");
+            diagnosticInfo.AppendLine($"Header: {_headerText}");
+            diagnosticInfo.AppendLine($"Orientation: {OrientationText}");
+
+            // Extract host and port from URL
+            var uri = new Uri(_raspberryPiUrl);
+            var host = uri.Host;
+            var port = uri.Port;
+
+            diagnosticInfo.AppendLine("\n=== NETWORK CONNECTIVITY ===");
+
+            // Check network access
+            var networkAccess = Connectivity.NetworkAccess;
+            diagnosticInfo.AppendLine($"Network Access: {networkAccess}");
+
+            if (networkAccess == NetworkAccess.Internet || networkAccess == NetworkAccess.Local)
+            {
+                diagnosticInfo.AppendLine("✓ Network available");
+
+                // Check active connections
+                var profiles = Connectivity.ConnectionProfiles;
+                diagnosticInfo.AppendLine($"Connection Types: {string.Join(", ", profiles)}");
+
+                diagnosticInfo.AppendLine("\n=== DNS RESOLUTION TEST ===");
+                diagnosticInfo.AppendLine("(Tests if the hostname can be resolved to an IP address)");
+
+                // Attempt to resolve DNS
+                string resolvedIp = null;
+                bool dnsFailed = false;
+                try
+                {
+                    var addresses = await System.Net.Dns.GetHostAddressesAsync(host);
+                    if (addresses.Length > 0)
+                    {
+                        resolvedIp = addresses[0].ToString();
+                        diagnosticInfo.AppendLine($"✓ DNS Resolution: {host} -> {resolvedIp}");
+                        diagnosticInfo.AppendLine($"  Host is resolvable");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    dnsFailed = true;
+                    diagnosticInfo.AppendLine($"✗ DNS Resolution Failed: {ex.Message}");
+                    diagnosticInfo.AppendLine($"  Cannot resolve hostname '{host}'");
+                    diagnosticInfo.AppendLine($"  Check: Is the hostname correct? Is DNS working?");
+                    diagnosticInfo.AppendLine("\n⚠ ABORTING: Cannot proceed without DNS resolution");
+
+                    Status = "Diagnostics complete - DNS failed";
+                    await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                    return;
+                }
+
+                // ICMP Ping Test
+                diagnosticInfo.AppendLine("\n=== ICMP PING TEST ===");
+                diagnosticInfo.AppendLine("(Tests if the host responds to ping packets)");
+
+                bool pingFailed = false;
+                if (resolvedIp != null)
+                {
+                    try
+                    {
+                        using var ping = new System.Net.NetworkInformation.Ping();
+                        var pingReply = await ping.SendPingAsync(resolvedIp, 5000); // 5 second timeout
+
+                        if (pingReply.Status == System.Net.NetworkInformation.IPStatus.Success)
+                        {
+                            diagnosticInfo.AppendLine($"✓ Ping Reply: {resolvedIp} responded in {pingReply.RoundtripTime}ms");
+                            diagnosticInfo.AppendLine($"  Host is reachable on the network");
+                            diagnosticInfo.AppendLine($"  TTL: {pingReply.Options?.Ttl}");
+                        }
+                        else
+                        {
+                            pingFailed = true;
+                            diagnosticInfo.AppendLine($"✗ Ping Failed: {pingReply.Status}");
+                            diagnosticInfo.AppendLine($"  Host at {resolvedIp} did not respond to ping");
+
+                            if (pingReply.Status == System.Net.NetworkInformation.IPStatus.TimedOut)
+                            {
+                                diagnosticInfo.AppendLine($"  Request timed out after 5 seconds");
+                                diagnosticInfo.AppendLine($"  Check: Is device on? Firewall blocking ICMP? Same network?");
+                            }
+                            else if (pingReply.Status == System.Net.NetworkInformation.IPStatus.DestinationHostUnreachable)
+                            {
+                                diagnosticInfo.AppendLine($"  Network route to host not found");
+                                diagnosticInfo.AppendLine($"  Check: Same subnet? Network configuration?");
+                            }
+                            else
+                            {
+                                diagnosticInfo.AppendLine($"  Check: Firewall settings, network connectivity");
+                            }
+
+                            diagnosticInfo.AppendLine("\n⚠ ABORTING: Host not reachable, skipping remaining tests");
+
+                            Status = "Diagnostics complete - Ping failed";
+                            await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        pingFailed = true;
+                        diagnosticInfo.AppendLine($"✗ Ping Error: {ex.Message}");
+                        diagnosticInfo.AppendLine($"  Note: Some networks/devices may block ICMP ping");
+                        diagnosticInfo.AppendLine($"  Continuing to TCP test...");
+                    }
+                }
+                else
+                {
+                    diagnosticInfo.AppendLine("⊘ Ping Skipped: DNS resolution failed, no IP to ping");
+                }
+
+                // Test basic TCP connectivity
+                diagnosticInfo.AppendLine("\n=== TCP CONNECTIVITY TEST ===");
+                diagnosticInfo.AppendLine($"(Tests if port {port} is reachable and accepting connections)");
+                var tcpSuccess = false;
+                try
+                {
+                    using var tcpClient = new System.Net.Sockets.TcpClient();
+                    var connectTask = tcpClient.ConnectAsync(host, port);
+                    var timeoutTask = Task.Delay(5000);
+
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    if (await Task.WhenAny(connectTask, timeoutTask) == connectTask)
+                    {
+                        sw.Stop();
+                        if (tcpClient.Connected)
+                        {
+                            tcpSuccess = true;
+                            diagnosticInfo.AppendLine($"✓ TCP Connection: {host}:{port} - Success ({sw.ElapsedMilliseconds}ms)");
+                            diagnosticInfo.AppendLine($"  Port {port} is open and accepting connections");
+                            if (resolvedIp != null)
+                                diagnosticInfo.AppendLine($"  Connected to: {resolvedIp}");
+                            tcpClient.Close();
+                        }
+                        else
+                        {
+                            diagnosticInfo.AppendLine($"✗ TCP Connection: {host}:{port} - Failed");
+                            diagnosticInfo.AppendLine($"  Port {port} refused connection");
+                            diagnosticInfo.AppendLine($"  Check: Is the service running? Is the port correct?");
+                        }
+                    }
+                    else
+                    {
+                        diagnosticInfo.AppendLine($"✗ TCP Connection: {host}:{port} - Timeout (5s)");
+                        diagnosticInfo.AppendLine($"  No response from {host}:{port}");
+                        if (resolvedIp != null)
+                        {
+                            diagnosticInfo.AppendLine($"  Host resolved to {resolvedIp} but not responding");
+                            diagnosticInfo.AppendLine($"  Check: Is the device powered on? Is it on the same network?");
+                        }
+                        else
+                        {
+                            diagnosticInfo.AppendLine($"  Check: Is the hostname/IP correct? Is the device reachable?");
+                        }
+
+                        diagnosticInfo.AppendLine("\n⚠ ABORTING: TCP port not reachable, skipping HTTP tests");
+
+                        Status = "Diagnostics complete - TCP failed";
+                        await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                        return;
+                    }
+                }
+                catch (System.Net.Sockets.SocketException ex)
+                {
+                    diagnosticInfo.AppendLine($"✗ TCP Connection Failed: {ex.SocketErrorCode}");
+                    diagnosticInfo.AppendLine($"  Error: {ex.Message}");
+
+                    if (ex.SocketErrorCode == System.Net.Sockets.SocketError.HostUnreachable)
+                    {
+                        diagnosticInfo.AppendLine($"  Host {host} is not reachable");
+                        diagnosticInfo.AppendLine($"  Check: Is the device on? Same network? Firewall blocking?");
+                    }
+                    else if (ex.SocketErrorCode == System.Net.Sockets.SocketError.ConnectionRefused)
+                    {
+                        diagnosticInfo.AppendLine($"  Connection refused - port {port} is closed");
+                        diagnosticInfo.AppendLine($"  Check: Is the service running on port {port}?");
+                    }
+                    else if (ex.SocketErrorCode == System.Net.Sockets.SocketError.TimedOut)
+                    {
+                        diagnosticInfo.AppendLine($"  Connection timed out");
+                        diagnosticInfo.AppendLine($"  Check: Network connection, firewall, device status");
+                    }
+
+                    diagnosticInfo.AppendLine("\n⚠ ABORTING: TCP connection failed, skipping HTTP tests");
+
+                    Status = "Diagnostics complete - TCP failed";
+                    await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    diagnosticInfo.AppendLine($"✗ TCP Connection Error: {ex.GetType().Name}");
+                    diagnosticInfo.AppendLine($"  {ex.Message}");
+
+                    diagnosticInfo.AppendLine("\n⚠ ABORTING: TCP connection error, skipping HTTP tests");
+
+                    Status = "Diagnostics complete - TCP failed";
+                    await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                    return;
+                }
+
+                // Only run HTTP tests if TCP succeeded
+                if (!tcpSuccess)
+                {
+                    diagnosticInfo.AppendLine("\n⚠ Skipping HTTP tests - TCP connection failed");
+
+                    Status = "Diagnostics complete - TCP failed";
+                    await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                    return;
+                }
+
+                diagnosticInfo.AppendLine("\n=== HTTP ENDPOINT TESTS ===");
+
+                // Test HTTP endpoints with appropriate methods
+                var endpoints = new[]
+                {
+                    ("/specials", "GET", "GET Specials"),
+                    ("/orientation", "GET", "GET Orientation"),
+                    ("/header", "GET", "GET Header"),
+                    ("/blanking/trigger", "POST", "POST Animation")
+                };
+
+                foreach (var (endpoint, method, description) in endpoints)
+                {
+                    try
+                    {
+                        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                        ApiAuthService.ApplyTokenHeader(client);
+
+                        HttpResponseMessage response;
+                        if (method == "POST")
+                        {
+                            response = await client.PostAsync($"{_raspberryPiUrl}{endpoint}", null);
+                        }
+                        else
+                        {
+                            response = await client.GetAsync($"{_raspberryPiUrl}{endpoint}");
+                        }
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            diagnosticInfo.AppendLine($"✓ {description}: {(int)response.StatusCode} {response.StatusCode}");
+                        }
+                        else
+                        {
+                            diagnosticInfo.AppendLine($"✗ {description}: {(int)response.StatusCode} {response.StatusCode}");
+                            diagnosticInfo.AppendLine($"  Endpoint {endpoint} returned error status");
+
+                            diagnosticInfo.AppendLine("\n⚠ ABORTING: HTTP endpoint failed, skipping remaining tests");
+
+                            Status = "Diagnostics complete - HTTP failed";
+                            await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                            return;
+                        }
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        diagnosticInfo.AppendLine($"✗ {description}: Timeout");
+                        diagnosticInfo.AppendLine($"  Endpoint {endpoint} did not respond within 5 seconds");
+
+                        diagnosticInfo.AppendLine("\n⚠ ABORTING: HTTP endpoint timeout, skipping remaining tests");
+
+                        Status = "Diagnostics complete - HTTP timeout";
+                        await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnosticInfo.AppendLine($"✗ {description}: {ex.Message}");
+                        diagnosticInfo.AppendLine($"  Error accessing {endpoint}");
+
+                        diagnosticInfo.AppendLine("\n⚠ ABORTING: HTTP endpoint error, skipping remaining tests");
+
+                        Status = "Diagnostics complete - HTTP error";
+                        await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                        return;
+                    }
+                }
+
+                // Overall API health check
+                diagnosticInfo.AppendLine("\n=== API HEALTH CHECK ===");
+                try
+                {
+                    var canConnect = await _apiService.TestConnectionAsync();
+                    diagnosticInfo.AppendLine($"API Test: {(canConnect ? "✓ Success" : "✗ Failed")}");
+
+                    if (!canConnect)
+                    {
+                        diagnosticInfo.AppendLine("\n⚠ API health check failed");
+
+                        Status = "Diagnostics complete - API health check failed";
+                        await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnosticInfo.AppendLine($"API Test: ✗ Error - {ex.Message}");
+
+                    diagnosticInfo.AppendLine("\n⚠ ABORTING: API health check error");
+
+                    Status = "Diagnostics complete - API health check error";
+                    await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+                    return;
+                }
+            }
+            else
+            {
+                diagnosticInfo.AppendLine("✗ No network connectivity");
+            }
+
+            Status = "Diagnostics complete";
+            await _dialogService.ShowAlertAsync("Diagnostics Report", diagnosticInfo.ToString());
+        }
+        catch (Exception ex)
+        {
+            Status = $"Diagnostics failed: {ex.Message}";
+            await _dialogService.ShowAlertAsync("Diagnostics Error", $"Failed to run diagnostics: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

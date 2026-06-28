@@ -30,7 +30,7 @@
             </Border.StrokeShape>
             <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
                 <!-- Primary Action Buttons Row -->
-                <Grid Grid.Row="0">
+                <ScrollView Grid.Row="0" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
                     <HorizontalStackLayout Spacing="8">
                         <Button 
                             Text="Add"
@@ -74,20 +74,20 @@
                             FontSize="12"
                             WidthRequest="40"/>
                     </HorizontalStackLayout>
-                </Grid>
+                </ScrollView>
 
                 <!-- Secondary Options Row (Collapsible) -->
-                <Grid Grid.Row="1" IsVisible="{Binding ShowMoreOptions}">
+                <ScrollView Grid.Row="1" Orientation="Horizontal" HorizontalScrollBarVisibility="Never" IsVisible="{Binding ShowMoreOptions}">
                     <HorizontalStackLayout Spacing="8">
                         <Button 
-                            Text="Library"
+                            Text="Lib"
                             Command="{Binding LoadFromLibraryCommand}"
                             BackgroundColor="DarkMagenta"
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>
                         <Button 
-                            Text="Header"
+                            Text="Hdr"
                             Command="{Binding HeaderCommand}"
                             BackgroundColor="DarkBlue"
                             TextColor="White"
@@ -98,21 +98,6 @@
                             Command="{Binding ToggleOrientationCommand}"
                             IsEnabled="{Binding IsConnected}"
                             BackgroundColor="#FF00FF"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
-                        <Button 
-                            Text="Test Animation"
-                            Command="{Binding TestAnimationCommand}"
-                            IsEnabled="{Binding IsConnected}"
-                            BackgroundColor="Purple"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
-                        <Button 
-                            Text="Diagnostic"
-                            Command="{Binding DiagnosticCommand}"
-                            BackgroundColor="Teal"
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>
@@ -130,8 +115,23 @@
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>
+                        <Button 
+                            Text="Test"
+                            Command="{Binding TestAnimationCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            BackgroundColor="Purple"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
+                        <Button 
+                            Text="Diag"
+                            Command="{Binding DiagnosticCommand}"
+                            BackgroundColor="Teal"
+                            TextColor="White"
+                            Padding="12,8"
+                            FontSize="12"/>
                     </HorizontalStackLayout>
-                </Grid>
+                </ScrollView>
 
                 <!-- Collection View -->
                 <CollectionView 

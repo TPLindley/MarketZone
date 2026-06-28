@@ -9,7 +9,7 @@ namespace mzConfigure.Services;
 public class SpecialsApiService
 {
     private readonly HttpClient _httpClient;
-    private string _baseUrl = "http://raspberrypi.local:8765";
+    private string _baseUrl = "http://10.42.0.1:8765";
 
     public SpecialsApiService()
     {
@@ -129,15 +129,19 @@ public class SpecialsApiService
     {
         try
         {
+            Log.Debug($"API: Calling GET {_baseUrl}/header");
             ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/header");
+            Log.Debug($"API: Header endpoint returned status {(int)response.StatusCode} {response.StatusCode}");
             response.EnsureSuccessStatusCode();
 
             var header = await response.Content.ReadFromJsonAsync<HeaderInfo>();
+            Log.Debug($"API: Header response - Text: '{header?.Text}', Color: '{header?.Color}'");
             return header ?? new HeaderInfo();
         }
         catch (Exception ex)
         {
+            Log.Error($"API: GetHeaderAsync failed - {ex.Message}");
             throw new Exception($"Failed to retrieve header: {ex.Message}", ex);
         }
     }
@@ -170,15 +174,20 @@ public class SpecialsApiService
     {
         try
         {
+            Log.Debug($"API: Calling GET {_baseUrl}/orientation");
             ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/orientation");
+            Log.Debug($"API: Orientation endpoint returned status {(int)response.StatusCode} {response.StatusCode}");
             response.EnsureSuccessStatusCode();
 
             var orientation = await response.Content.ReadFromJsonAsync<OrientationInfo>();
-            return NormalizeOrientation(orientation?.Orientation);
+            var normalized = NormalizeOrientation(orientation?.Orientation);
+            Log.Debug($"API: Orientation response - Raw: '{orientation?.Orientation}', Normalized: '{normalized}'");
+            return normalized;
         }
         catch (Exception ex)
         {
+            Log.Error($"API: GetOrientationAsync failed - {ex.Message}");
             throw new Exception($"Failed to retrieve orientation: {ex.Message}", ex);
         }
     }
@@ -188,20 +197,52 @@ public class SpecialsApiService
     /// </summary>
     public async Task SetOrientationAsync(string orientation)
     {
-        try
-        {
-            ApiAuthService.ApplyTokenHeader(_httpClient);
-            var payload = new OrientationInfo { Orientation = NormalizeOrientation(orientation) };
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+        const int maxRetries = 3;
+        const int retryDelayMs = 1000;
 
-            var response = await _httpClient.PostAsync($"{_baseUrl}/orientation", content);
-            response.EnsureSuccessStatusCode();
-        }
-        catch (Exception ex)
+        var normalizedOrientation = NormalizeOrientation(orientation);
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            throw new Exception($"Failed to set orientation: {ex.Message}", ex);
+            try
+            {
+                var url = $"{_baseUrl}/orientation";
+                Log.Debug($"API: Calling POST {url} with orientation={normalizedOrientation} (Attempt {attempt}/{maxRetries})");
+
+                ApiAuthService.ApplyTokenHeader(_httpClient);
+                var payload = new OrientationInfo { Orientation = normalizedOrientation };
+                var json = JsonSerializer.Serialize(payload);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync(url, content);
+                Log.Debug($"API: Orientation endpoint returned status {(int)response.StatusCode} {response.StatusCode}");
+
+                response.EnsureSuccessStatusCode();
+                Log.Info($"API: Orientation set successfully to '{normalizedOrientation}' on attempt {attempt}");
+                return;
+            }
+            catch (HttpRequestException ex) when (attempt < maxRetries && 
+                (ex.Message.Contains("Connection reset") || 
+                 ex.Message.Contains("connection was closed") ||
+                 ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable))
+            {
+                Log.Warning($"API: SetOrientationAsync connection issue on attempt {attempt} - {ex.Message}, retrying after {retryDelayMs}ms...");
+                await Task.Delay(retryDelayMs);
+            }
+            catch (TaskCanceledException ex) when (attempt < maxRetries)
+            {
+                Log.Warning($"API: SetOrientationAsync timeout on attempt {attempt}, retrying after {retryDelayMs}ms...");
+                await Task.Delay(retryDelayMs);
+            }
+            catch (Exception ex)
+            {
+                Log.Exception(ex, $"API: SetOrientationAsync failed on attempt {attempt}");
+                throw new Exception($"Failed to set orientation: {ex.Message}", ex);
+            }
         }
+
+        // If we exhausted all retries
+        throw new Exception($"Failed to set orientation after {maxRetries} attempts - connection keeps resetting");
     }
 
     private static string NormalizeOrientation(string? orientation)
@@ -216,17 +257,57 @@ public class SpecialsApiService
     /// </summary>
     public async Task<bool> TriggerAnimationAsync()
     {
-        try
+        const int maxRetries = 2;
+        const int retryDelayMs = 500;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            ApiAuthService.ApplyTokenHeader(_httpClient);
-            var response = await _httpClient.PostAsync($"{_baseUrl}/blanking/trigger", null);
-            response.EnsureSuccessStatusCode();
-            return true;
+            try
+            {
+                var url = $"{_baseUrl}/blanking/trigger";
+                Log.Debug($"API: Calling POST {url} (Attempt {attempt}/{maxRetries})");
+                ApiAuthService.ApplyTokenHeader(_httpClient);
+
+                var response = await _httpClient.PostAsync(url, null);
+                Log.Debug($"API: Animation trigger returned status {(int)response.StatusCode} {response.StatusCode}");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var content = await response.Content.ReadAsStringAsync();
+                    Log.Warning($"API: Animation trigger failed (attempt {attempt}) - Status: {response.StatusCode}, Body: {content}");
+
+                    // If 404 and we have retries left, wait and try again
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound && attempt < maxRetries)
+                    {
+                        Log.Info($"API: Retrying after {retryDelayMs}ms delay...");
+                        await Task.Delay(retryDelayMs);
+                        continue;
+                    }
+                }
+
+                response.EnsureSuccessStatusCode();
+                Log.Info($"API: Animation triggered successfully on attempt {attempt}");
+                return true;
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound && attempt < maxRetries)
+            {
+                Log.Warning($"API: TriggerAnimationAsync HTTP 404 on attempt {attempt}, retrying after {retryDelayMs}ms...");
+                await Task.Delay(retryDelayMs);
+            }
+            catch (HttpRequestException ex)
+            {
+                Log.Error($"API: TriggerAnimationAsync HTTP error - StatusCode: {ex.StatusCode}, Message: {ex.Message}");
+                throw new Exception($"Failed to trigger animation: HTTP {ex.StatusCode} - {ex.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                Log.Exception(ex, "API: TriggerAnimationAsync failed");
+                throw new Exception($"Failed to trigger animation: {ex.Message}", ex);
+            }
         }
-        catch (Exception ex)
-        {
-            throw new Exception($"Failed to trigger animation: {ex.Message}", ex);
-        }
+
+        // If we exhausted all retries
+        throw new Exception($"Failed to trigger animation after {maxRetries} attempts");
     }
 
     public class HeaderInfo
