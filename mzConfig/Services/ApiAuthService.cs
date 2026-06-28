@@ -8,7 +8,7 @@ namespace mzConfigure.Services;
 public static class ApiAuthService
 {
     private const string ApiTokenPreferenceKey = "mzspecials_api_token";
-    private const string DefaultApiToken = "change-me";
+    private const string DefaultApiToken = "rpbs$best-cinnamon-buns-ever$";
     private const string ApiTokenEnvironmentKey = "MZSPECIALS_API_TOKEN";
 
     public static string GetApiToken()

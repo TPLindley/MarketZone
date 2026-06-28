@@ -736,7 +736,27 @@ public class MainViewModel : INotifyPropertyChanged
             Log.Info($"Sending API call to set orientation to {orientationText}");
             await _apiService.SetOrientationAsync(orientationText);
 
-            // Update local state only after successful API call
+            // Verify connection is still alive after orientation change
+            Log.Info("Verifying connection health after orientation change...");
+            await Task.Delay(500); // Give the display a moment to process
+
+            var stillConnected = await _apiService.TestConnectionAsync();
+            if (!stillConnected)
+            {
+                Log.Warning("Connection lost after orientation change - display may have restarted");
+                Status = "Orientation changed, but connection lost. Please reconnect.";
+                IsConnected = false;
+                await _dialogService.ShowAlertAsync("Connection Lost", 
+                    "The orientation was changed, but the display connection was lost. " +
+                    "The display may be restarting. Please reconnect.");
+                return;
+            }
+
+            // Dump server state for diagnostics
+            var serverState = await _apiService.GetServerStateAsync();
+            Log.Info($"Server state after orientation change:\n{serverState}");
+
+            // Update local state only after successful API call and connection verification
             IsPortrait = newOrientation;
             Status = $"Orientation set to {OrientationText}";
             Log.Separator($"ToggleOrientation: Success - Button now shows '{OrientationText}'");
@@ -745,7 +765,21 @@ public class MainViewModel : INotifyPropertyChanged
         {
             Log.Exception(ex, "ToggleOrientation: FAILED");
             Status = $"Error: {ex.Message}";
-            await _dialogService.ShowAlertAsync("Error", $"Failed to toggle orientation: {ex.Message}");
+
+            // Check if we're still connected
+            var stillConnected = await _apiService.TestConnectionAsync();
+            if (!stillConnected)
+            {
+                Log.Error("Connection lost after orientation failure");
+                IsConnected = false;
+                await _dialogService.ShowAlertAsync("Connection Lost", 
+                    "Failed to change orientation and lost connection to the display. " +
+                    "The display may have crashed. Please check the display and reconnect.");
+            }
+            else
+            {
+                await _dialogService.ShowAlertAsync("Error", $"Failed to toggle orientation: {ex.Message}");
+            }
         }
         finally
         {
@@ -1075,6 +1109,27 @@ public class MainViewModel : INotifyPropertyChanged
         {
             Log.Info($"Sending POST request to {_raspberryPiUrl}/blanking/trigger");
             await _apiService.TriggerAnimationAsync();
+
+            // Verify connection is still alive after animation
+            Log.Info("Verifying connection health after animation...");
+            await Task.Delay(500);
+
+            var stillConnected = await _apiService.TestConnectionAsync();
+            if (!stillConnected)
+            {
+                Log.Warning("Connection lost after animation - display may have crashed");
+                Status = "Animation may have run, but connection lost. Please reconnect.";
+                IsConnected = false;
+                await _dialogService.ShowAlertAsync("Connection Lost", 
+                    "The animation command was sent, but the display connection was lost. " +
+                    "The display may have crashed or restarted. Please reconnect.");
+                return;
+            }
+
+            // Dump server state for diagnostics
+            var serverState = await _apiService.GetServerStateAsync();
+            Log.Info($"Server state after animation:\n{serverState}");
+
             Status = "Animation triggered successfully";
             Log.Separator("TestAnimation: Success");
         }
@@ -1082,7 +1137,21 @@ public class MainViewModel : INotifyPropertyChanged
         {
             Log.Exception(ex, "TestAnimation: FAILED");
             Status = $"Animation test failed: {ex.Message}";
-            await _dialogService.ShowAlertAsync("Error", $"Failed to trigger animation: {ex.Message}");
+
+            // Check if we're still connected
+            var stillConnected = await _apiService.TestConnectionAsync();
+            if (!stillConnected)
+            {
+                Log.Error("Connection lost after animation failure");
+                IsConnected = false;
+                await _dialogService.ShowAlertAsync("Connection Lost", 
+                    "Failed to trigger animation and lost connection to the display. " +
+                    "The display may have crashed. Please check the display and reconnect.");
+            }
+            else
+            {
+                await _dialogService.ShowAlertAsync("Error", $"Failed to trigger animation: {ex.Message}");
+            }
         }
         finally
         {

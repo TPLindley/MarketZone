@@ -112,12 +112,16 @@ public class SpecialsApiService
     {
         try
         {
+            Log.Debug($"TestConnection: GET {_baseUrl}/specials");
             ApiAuthService.ApplyTokenHeader(_httpClient);
             var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
-            return response.IsSuccessStatusCode;
+            var success = response.IsSuccessStatusCode;
+            Log.Debug($"TestConnection: Status={response.StatusCode}, Success={success}");
+            return success;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning($"TestConnection: Failed - {ex.Message}");
             return false;
         }
     }
@@ -308,6 +312,49 @@ public class SpecialsApiService
 
         // If we exhausted all retries
         throw new Exception($"Failed to trigger animation after {maxRetries} attempts");
+    }
+
+    /// <summary>
+    /// GET /specials and /header to verify server state after an operation
+    /// </summary>
+    public async Task<string> GetServerStateAsync()
+    {
+        try
+        {
+            Log.Debug("GetServerState: Retrieving full server state");
+            ApiAuthService.ApplyTokenHeader(_httpClient);
+
+            var specialsResponse = await _httpClient.GetAsync($"{_baseUrl}/specials");
+            var specialsStatus = specialsResponse.StatusCode;
+            var specialsData = specialsResponse.IsSuccessStatusCode 
+                ? await specialsResponse.Content.ReadAsStringAsync() 
+                : "N/A";
+
+            var headerResponse = await _httpClient.GetAsync($"{_baseUrl}/header");
+            var headerStatus = headerResponse.StatusCode;
+            var headerData = headerResponse.IsSuccessStatusCode 
+                ? await headerResponse.Content.ReadAsStringAsync() 
+                : "N/A";
+
+            var orientationResponse = await _httpClient.GetAsync($"{_baseUrl}/orientation");
+            var orientationStatus = orientationResponse.StatusCode;
+            var orientationData = orientationResponse.IsSuccessStatusCode 
+                ? await orientationResponse.Content.ReadAsStringAsync() 
+                : "N/A";
+
+            var state = $"SPECIALS [{specialsStatus}]: {specialsData}\n" +
+                       $"HEADER [{headerStatus}]: {headerData}\n" +
+                       $"ORIENTATION [{orientationStatus}]: {orientationData}";
+
+            Log.Debug($"GetServerState:\n{state}");
+            return state;
+        }
+        catch (Exception ex)
+        {
+            var error = $"Failed to retrieve server state: {ex.Message}";
+            Log.Warning(error);
+            return error;
+        }
     }
 
     public class HeaderInfo

@@ -43,7 +43,7 @@ static void log(const std::string& level, const std::string& msg)
 
 // --- API port ---
 static const int API_PORT = 8765;
-static const std::string DEFAULT_API_TOKEN = "change-me";
+static const std::string DEFAULT_API_TOKEN = "rpbs$best-cinnamon-buns-ever$";
 
 // --- Scroll speed ---
 static const double SCROLL_SPEED = 40.0;
