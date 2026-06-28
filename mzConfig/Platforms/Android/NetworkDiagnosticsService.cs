@@ -234,6 +234,7 @@ public partial class NetworkDiagnosticsService : INetworkDiagnosticsService
         {
             using var httpClient = new System.Net.Http.HttpClient();
             httpClient.Timeout = TimeSpan.FromSeconds(5);
+            ApiAuthService.ApplyTokenHeader(httpClient);
 
             var url = $"http://{host}:{port}/specials";
             var response = await httpClient.GetAsync(url);
@@ -241,6 +242,10 @@ public partial class NetworkDiagnosticsService : INetworkDiagnosticsService
             if (response.IsSuccessStatusCode)
             {
                 return (true, $"Server responded: {response.StatusCode}");
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                return (false, "Server rejected request: unauthorized (check API token)");
             }
             else
             {

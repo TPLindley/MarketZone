@@ -16,6 +16,7 @@
 #include <fstream>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include "json.hpp"
 #include "httplib.h"
 
@@ -42,6 +43,7 @@ static void log(const std::string& level, const std::string& msg)
 
 // --- API port ---
 static const int API_PORT = 8765;
+static const std::string DEFAULT_API_TOKEN = "change-me";
 
 // --- Scroll speed ---
 static const double SCROLL_SPEED = 40.0;
@@ -92,11 +94,35 @@ static std::string orientation_file_path()
     return dir + "/orientation.json";
 }
 
+static std::string blanking_file_path()
+{
+    std::string dir = std::string(g_get_user_data_dir()) + "/mzSpecials";
+    std::filesystem::create_directories(dir);
+    return dir + "/blanking.json";
+}
+
 static const std::string DEFAULT_HEADER_TEXT  = "Rolling Pin Bakery";
 static const std::string BRAND_GRAPHIC_COLOR  = "#FF00FF";
 static const std::string DEFAULT_HEADER_COLOR = BRAND_GRAPHIC_COLOR;
 static const std::string LEGACY_HEADER_COLOR  = "#FF1595";
 static const std::string DEFAULT_ORIENTATION  = "landscape";
+static const int DEFAULT_BLANK_INTERVAL_SECONDS = 300;
+static const double DEFAULT_BLANK_ANIMATION_SECONDS = 5.0;
+
+struct BlankingConfig {
+    int interval_seconds = DEFAULT_BLANK_INTERVAL_SECONDS;
+    double animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+};
+
+static BlankingConfig normalize_blanking_config(const BlankingConfig& cfg)
+{
+    BlankingConfig normalized = cfg;
+    if (normalized.interval_seconds <= 0)
+        normalized.interval_seconds = DEFAULT_BLANK_INTERVAL_SECONDS;
+    if (normalized.animation_seconds <= 0.0)
+        normalized.animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+    return normalized;
+}
 
 static std::string normalize_orientation(std::string orientation)
 {
@@ -165,6 +191,45 @@ static std::string load_orientation()
     } catch (...) {
         log("WARN", "Failed to parse orientation file, using default: " + DEFAULT_ORIENTATION);
         return DEFAULT_ORIENTATION;
+    }
+}
+
+static void save_blanking_config(const BlankingConfig& cfg)
+{
+    BlankingConfig normalized = normalize_blanking_config(cfg);
+    log("INFO", "Saving blanking config: interval="
+        + std::to_string(normalized.interval_seconds)
+        + "s animation=" + std::to_string(normalized.animation_seconds) + "s");
+
+    json obj = {
+        {"interval_seconds", normalized.interval_seconds},
+        {"animation_seconds", normalized.animation_seconds}
+    };
+    std::ofstream f(blanking_file_path());
+    f << obj.dump(2);
+}
+
+static BlankingConfig load_blanking_config()
+{
+    std::ifstream f(blanking_file_path());
+    if (!f.is_open()) {
+        log("INFO", "No blanking config file found, using defaults");
+        return BlankingConfig{};
+    }
+
+    try {
+        json obj = json::parse(f);
+        BlankingConfig cfg;
+        cfg.interval_seconds = obj.value("interval_seconds", DEFAULT_BLANK_INTERVAL_SECONDS);
+        cfg.animation_seconds = obj.value("animation_seconds", DEFAULT_BLANK_ANIMATION_SECONDS);
+        cfg = normalize_blanking_config(cfg);
+        log("INFO", "Loaded blanking config: interval="
+            + std::to_string(cfg.interval_seconds)
+            + "s animation=" + std::to_string(cfg.animation_seconds) + "s");
+        return cfg;
+    } catch (...) {
+        log("WARN", "Failed to parse blanking config, using defaults");
+        return BlankingConfig{};
     }
 }
 
@@ -456,6 +521,7 @@ static Gtk::Viewport*      g_viewport    = nullptr;
 static ScrollState*        g_state       = nullptr;
 static Pango::FontDescription* g_item_font = nullptr;
 static Gtk::DrawingArea*   g_header_area = nullptr;
+static Gtk::DrawingArea*   g_blanking_area = nullptr;
 static std::string         g_header_text;
 static std::string         g_header_color = DEFAULT_HEADER_COLOR;
 static std::string         g_orientation = DEFAULT_ORIENTATION;
@@ -465,10 +531,109 @@ static bool                g_header_font_bold = true;
 static const int           HEADER_FONT_SIZE = 990000;
 static const std::string   PREFERRED_HEADER_FONT_FAMILY = "Merriweather";
 static const double        PI = 3.14159265358979323846;
+static BlankingConfig      g_blanking_config;
+static bool                g_blanking_active = false;
+static std::chrono::steady_clock::time_point g_next_blank_time;
+static std::chrono::steady_clock::time_point g_blanking_started_at;
+static std::shared_ptr<RsvgHandle> g_separator_svg_handle;
+static double              g_separator_svg_w = 0.0;
+static double              g_separator_svg_h = 0.0;
+static std::string         g_api_token = DEFAULT_API_TOKEN;
 
 static void schedule_rebuild();
 static void evaluate_scroll_state();
 static void schedule_scroll_evaluations(int count);
+
+static std::string load_api_token()
+{
+    const char* env_token = g_getenv("MZSPECIALS_API_TOKEN");
+    if (env_token && *env_token)
+        return env_token;
+    return DEFAULT_API_TOKEN;
+}
+
+static bool request_has_valid_token(const httplib::Request& req)
+{
+    std::string expected_token;
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        expected_token = g_api_token;
+    }
+
+    if (expected_token.empty())
+        return false;
+
+    std::string token = req.get_header_value("X-API-Token");
+    if (token.empty()) {
+        const std::string auth = req.get_header_value("Authorization");
+        const std::string bearer_prefix = "Bearer ";
+        if (auth.rfind(bearer_prefix, 0) == 0)
+            token = auth.substr(bearer_prefix.size());
+    }
+
+    return token == expected_token;
+}
+
+static bool load_separator_svg_asset()
+{
+    const std::string svg_path =
+        std::filesystem::canonical("/proc/self/exe").parent_path().string()
+        + "/assets/rpbs.svg";
+
+    auto handle = std::shared_ptr<RsvgHandle>(
+        rsvg_handle_new_from_file(svg_path.c_str(), nullptr),
+        [](RsvgHandle* h){ if (h) g_object_unref(h); });
+    if (!handle)
+        return false;
+
+    double out_w = 0.0;
+    double out_h = 0.0;
+    if (!rsvg_handle_get_intrinsic_size_in_pixels(handle.get(), &out_w, &out_h)
+        || out_w <= 0.0 || out_h <= 0.0)
+        return false;
+
+    g_separator_svg_handle = handle;
+    g_separator_svg_w = out_w;
+    g_separator_svg_h = out_h;
+    return true;
+}
+
+static bool update_blanking_animation()
+{
+    bool should_queue_draw = false;
+    bool should_be_visible = false;
+
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        auto now = std::chrono::steady_clock::now();
+
+        if (!g_blanking_active && now >= g_next_blank_time) {
+            g_blanking_active = true;
+            g_blanking_started_at = now;
+            should_queue_draw = true;
+        }
+
+        if (g_blanking_active) {
+            should_be_visible = true;
+            should_queue_draw = true;
+
+            std::chrono::duration<double> elapsed = now - g_blanking_started_at;
+            if (elapsed.count() >= g_blanking_config.animation_seconds) {
+                g_blanking_active = false;
+                should_be_visible = false;
+                g_next_blank_time = now + std::chrono::seconds(g_blanking_config.interval_seconds);
+            }
+        }
+    }
+
+    if (g_blanking_area) {
+        g_blanking_area->set_visible(should_be_visible);
+        if (should_queue_draw)
+            g_blanking_area->queue_draw();
+    }
+
+    return true;
+}
 
 static std::string load_custom_header_font_family()
 {
@@ -753,6 +918,16 @@ static void run_api_server()
 {
     httplib::Server svr;
 
+    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        if (request_has_valid_token(req))
+            return httplib::Server::HandlerResponse::Unhandled;
+
+        log("WARN", "Unauthorized request to " + req.path + " from " + req.remote_addr);
+        res.status = 401;
+        res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+        return httplib::Server::HandlerResponse::Handled;
+    });
+
     // GET /header — return current header text and color
     svr.Get("/header", [](const httplib::Request& req, httplib::Response& res) {
         log("HTTP", "GET /header from " + req.remote_addr);
@@ -899,6 +1074,98 @@ static void run_api_server()
         }
     });
 
+    // GET /blanking — return timer/animation configuration
+    svr.Get("/blanking", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "GET /blanking from " + req.remote_addr);
+        BlankingConfig cfg;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            cfg = g_blanking_config;
+        }
+        json obj = {
+            {"interval_seconds", cfg.interval_seconds},
+            {"animation_seconds", cfg.animation_seconds}
+        };
+        res.set_content(obj.dump(2), "application/json");
+    });
+
+    // POST /blanking — set timer/animation configuration
+    // Body: {"interval_seconds":300,"animation_seconds":5.0}
+    svr.Post("/blanking", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "POST /blanking from " + req.remote_addr + " body=" + req.body);
+        try {
+            json obj = json::parse(req.body);
+            BlankingConfig cfg;
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                cfg = g_blanking_config;
+            }
+
+            if (obj.contains("interval_seconds")) {
+                int interval = obj.value("interval_seconds", cfg.interval_seconds);
+                if (interval <= 0) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"interval_seconds must be > 0\"}", "application/json");
+                    return;
+                }
+                cfg.interval_seconds = interval;
+            }
+
+            if (obj.contains("animation_seconds")) {
+                double animation = obj.value("animation_seconds", cfg.animation_seconds);
+                if (animation <= 0.0) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"animation_seconds must be > 0\"}", "application/json");
+                    return;
+                }
+                cfg.animation_seconds = animation;
+            }
+
+            cfg = normalize_blanking_config(cfg);
+
+            {
+                std::lock_guard<std::mutex> lk(g_mutex);
+                g_blanking_config = cfg;
+                g_blanking_active = false;
+                g_next_blank_time = std::chrono::steady_clock::now()
+                    + std::chrono::seconds(g_blanking_config.interval_seconds);
+            }
+            save_blanking_config(cfg);
+
+            json out = {
+                {"status", "ok"},
+                {"interval_seconds", cfg.interval_seconds},
+                {"animation_seconds", cfg.animation_seconds}
+            };
+            res.set_content(out.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            log("ERROR", std::string("POST /blanking exception: ") + e.what());
+            res.status = 400;
+            res.set_content(std::string("{\"error\":\"") + e.what() + "\"}", "application/json");
+        }
+    });
+
+    // POST /blanking/trigger — trigger blank/tumble animation immediately
+    svr.Post("/blanking/trigger", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "POST /blanking/trigger from " + req.remote_addr);
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            auto now = std::chrono::steady_clock::now();
+            g_blanking_active = true;
+            g_blanking_started_at = now;
+            g_next_blank_time = now + std::chrono::seconds(g_blanking_config.interval_seconds);
+        }
+
+        Glib::signal_idle().connect_once([]() {
+            if (g_blanking_area) {
+                g_blanking_area->set_visible(true);
+                g_blanking_area->queue_draw();
+            }
+        });
+
+        res.set_content("{\"status\":\"ok\",\"triggered\":true}", "application/json");
+    });
+
     if (!svr.bind_to_port("0.0.0.0", API_PORT)) {
         log("ERROR", "Failed to bind to port " + std::to_string(API_PORT)
             + " — port already in use?");
@@ -918,6 +1185,14 @@ int main(int argc, char* argv[])
     log("INFO", "mzSpecials starting up");
     auto app = Gtk::Application::create(argc, argv, "com.terminal-solutions.mzSpecials");
 
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        g_api_token = load_api_token();
+    }
+    if (g_api_token == DEFAULT_API_TOKEN) {
+        log("WARN", "Using default API token; set MZSPECIALS_API_TOKEN for production");
+    }
+
     // Load persisted list
     {
         auto loaded = load_specials();
@@ -927,6 +1202,10 @@ int main(int argc, char* argv[])
         g_header_text  = hdr.text;
         g_header_color = hdr.color;
         g_orientation  = load_orientation();
+        g_blanking_config = load_blanking_config();
+        g_next_blank_time = std::chrono::steady_clock::now()
+            + std::chrono::seconds(g_blanking_config.interval_seconds);
+        g_blanking_active = false;
     }
 
     g_black.set_rgba(0.0, 0.0, 0.0, 1.0);
@@ -948,9 +1227,12 @@ int main(int argc, char* argv[])
     window.fullscreen();
     window.override_background_color(g_black);
 
+    Gtk::Overlay root_overlay;
+    window.add(root_overlay);
+
     Gtk::Box main_box(Gtk::ORIENTATION_VERTICAL, 0);
     g_main_box = &main_box;
-    window.add(main_box);
+    root_overlay.add(main_box);
 
     // --- Header ---
     Gtk::EventBox header_eb;
@@ -1054,6 +1336,74 @@ int main(int argc, char* argv[])
 
     main_box.pack_start(scrolled, true, true, 0);
 
+    load_separator_svg_asset();
+
+    Gtk::DrawingArea blanking_area;
+    g_blanking_area = &blanking_area;
+    blanking_area.override_background_color(g_black);
+    blanking_area.set_halign(Gtk::ALIGN_FILL);
+    blanking_area.set_valign(Gtk::ALIGN_FILL);
+    blanking_area.set_hexpand(true);
+    blanking_area.set_vexpand(true);
+    blanking_area.set_no_show_all(true);
+    blanking_area.hide();
+    blanking_area.signal_draw().connect([&blanking_area](const Cairo::RefPtr<Cairo::Context>& cr) {
+        int w = blanking_area.get_allocated_width();
+        int h = blanking_area.get_allocated_height();
+        cr->set_source_rgb(0.0, 0.0, 0.0);
+        cr->rectangle(0, 0, w, h);
+        cr->fill();
+
+        double elapsed_seconds = 0.0;
+        double animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+        {
+            std::lock_guard<std::mutex> lk(g_mutex);
+            if (!g_blanking_active)
+                return true;
+
+            std::chrono::duration<double> elapsed =
+                std::chrono::steady_clock::now() - g_blanking_started_at;
+            elapsed_seconds = elapsed.count();
+            animation_seconds = g_blanking_config.animation_seconds;
+        }
+
+        if (animation_seconds <= 0.0)
+            animation_seconds = DEFAULT_BLANK_ANIMATION_SECONDS;
+
+        double t = std::clamp(elapsed_seconds / animation_seconds, 0.0, 1.0);
+        double eased = 1.0 - std::pow(1.0 - t, 3.0);
+        double scale = 0.15 + 0.85 * eased;
+        double rotation = (1.0 - eased) * 5.0 * PI;
+
+        cr->save();
+        cr->translate(w / 2.0, h / 2.0);
+        cr->rotate(rotation);
+        cr->scale(scale, scale);
+
+        if (g_separator_svg_handle && g_separator_svg_w > 0.0 && g_separator_svg_h > 0.0) {
+            double target_w = std::min(static_cast<double>(w) * 0.75, 1200.0);
+            double fit = target_w / g_separator_svg_w;
+
+            cr->scale(fit, fit);
+            cr->translate(-g_separator_svg_w / 2.0, -g_separator_svg_h / 2.0);
+
+            RsvgRectangle viewport = {0, 0, g_separator_svg_w, g_separator_svg_h};
+            rsvg_handle_render_document(g_separator_svg_handle.get(), cr->cobj(), &viewport, nullptr);
+        } else {
+            cr->set_source_rgb(1.0, 0.0, 1.0);
+            cr->set_line_width(6.0);
+            const double half_w = std::min(static_cast<double>(w) * 0.28, 420.0);
+            cr->move_to(-half_w, 0);
+            cr->line_to(half_w, 0);
+            cr->stroke();
+        }
+
+        cr->restore();
+        return true;
+    });
+    root_overlay.add_overlay(blanking_area);
+    root_overlay.set_overlay_pass_through(blanking_area, true);
+
     ScrollState* state = new ScrollState();
     state->content_box = content_box;
     g_state = state;
@@ -1072,6 +1422,7 @@ int main(int argc, char* argv[])
 
     scrolled.add_tick_callback([state, viewport](const Glib::RefPtr<Gdk::FrameClock>& clock) {
         evaluate_scroll_state();
+        update_blanking_animation();
         return on_scroll_tick(clock, state, viewport);
     });
 
