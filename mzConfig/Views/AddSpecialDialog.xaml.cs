@@ -49,6 +49,7 @@ public partial class AddSpecialDialog : ContentPage
         try
         {
             _librarySpecials = await _libraryService.LoadLibraryAsync();
+            Log.Info($"AddSpecialDialog: Loaded {_librarySpecials.Count} specials from library");
 
             if (_librarySpecials.Count > 0)
             {
@@ -57,6 +58,8 @@ public partial class AddSpecialDialog : ContentPage
                     .Where(lib => !_existingSpecials.Any(existing => 
                         existing.Text.Trim().Equals(lib.Text.Trim(), StringComparison.OrdinalIgnoreCase)))
                     .ToList();
+
+                Log.Info($"AddSpecialDialog: {availableSpecials.Count} specials available after filtering");
 
                 // Add filtered library items to picker
                 foreach (var special in availableSpecials)
@@ -67,10 +70,14 @@ public partial class AddSpecialDialog : ContentPage
                 // Update the library specials list to only include available ones
                 _librarySpecials = availableSpecials;
             }
+            else
+            {
+                Log.Info("AddSpecialDialog: Library is empty, no specials to display");
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // If library fails to load, just continue with empty picker
+            Log.Exception(ex, "AddSpecialDialog: Failed to load library");
         }
     }
 

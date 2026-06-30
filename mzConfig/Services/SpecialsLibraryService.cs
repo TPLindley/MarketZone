@@ -24,16 +24,26 @@ public class SpecialsLibraryService
     {
         try
         {
+            Log.Debug($"SpecialsLibraryService: Loading library from {_libraryFilePath}");
+
             if (!File.Exists(_libraryFilePath))
+            {
+                Log.Info("SpecialsLibraryService: Library file does not exist yet");
                 return new List<Special>();
+            }
 
             var json = await File.ReadAllTextAsync(_libraryFilePath);
+            Log.Debug($"SpecialsLibraryService: Read {json.Length} characters from library file");
+
             var specials = JsonSerializer.Deserialize<List<Special>>(json);
+            var count = specials?.Count ?? 0;
+            Log.Info($"SpecialsLibraryService: Loaded {count} specials from library");
+
             return specials ?? new List<Special>();
         }
-        catch
+        catch (Exception ex)
         {
-            // If file is corrupted or can't be read, return empty list
+            Log.Exception(ex, "SpecialsLibraryService: Failed to load library");
             return new List<Special>();
         }
     }
@@ -47,6 +57,7 @@ public class SpecialsLibraryService
     {
         // Load existing library
         var library = await LoadLibraryAsync();
+        var initialCount = library.Count;
 
         // Create a dictionary for fast duplicate lookup (case-insensitive)
         var libraryDict = library.ToDictionary(
@@ -55,6 +66,7 @@ public class SpecialsLibraryService
             StringComparer.OrdinalIgnoreCase);
 
         // Add only non-duplicates
+        int addedCount = 0;
         foreach (var special in newSpecials)
         {
             var key = special.Text.Trim().ToLowerInvariant();
@@ -62,9 +74,12 @@ public class SpecialsLibraryService
             {
                 library.Add(special);
                 libraryDict[key] = special;
+                addedCount++;
             }
             // If duplicate with different color, ignore the new one (keep existing)
         }
+
+        Log.Info($"SpecialsLibraryService: Added {addedCount} new specials (library now has {library.Count} items, was {initialCount})");
 
         // Save updated library
         await SaveLibraryAsync(library);
@@ -82,11 +97,11 @@ public class SpecialsLibraryService
                 WriteIndented = true
             });
             await File.WriteAllTextAsync(_libraryFilePath, json);
+            Log.Info($"SpecialsLibraryService: Saved {library.Count} specials to {_libraryFilePath}");
         }
-        catch
+        catch (Exception ex)
         {
-            // Silently fail if we can't save (disk full, permissions, etc.)
-            // The app can continue without library persistence
+            Log.Exception(ex, "SpecialsLibraryService: Failed to save library");
         }
     }
 
