@@ -10,6 +10,8 @@ public class SpecialsApiService
 {
     private readonly HttpClient _httpClient;
     private string _baseUrl = "http://10.42.0.1:8765";
+    private string _lastServiceVersion = string.Empty;
+    private int _lastServiceUptimeSeconds = 0;
 
     public SpecialsApiService()
     {
@@ -26,6 +28,16 @@ public class SpecialsApiService
     }
 
     /// <summary>
+    /// Gets the last known service version from successful API calls
+    /// </summary>
+    public string LastServiceVersion => _lastServiceVersion;
+
+    /// <summary>
+    /// Gets the last known service uptime in seconds from successful API calls
+    /// </summary>
+    public int LastServiceUptimeSeconds => _lastServiceUptimeSeconds;
+
+    /// <summary>
     /// GET /specials - Retrieve current display list
     /// </summary>
     public async Task<List<Special>> GetSpecialsAsync()
@@ -37,6 +49,19 @@ public class SpecialsApiService
             response.EnsureSuccessStatusCode();
 
             var wrapper = await response.Content.ReadFromJsonAsync<SpecialsResponse>();
+
+            // Capture service version and uptime if available
+            if (!string.IsNullOrEmpty(wrapper?.Version))
+            {
+                _lastServiceVersion = wrapper.Version;
+            }
+
+            var uptime = wrapper?.GetUptime() ?? 0;
+            if (uptime > 0)
+            {
+                _lastServiceUptimeSeconds = uptime;
+            }
+
             return wrapper?.Specials ?? new List<Special>();
         }
         catch (Exception ex)
@@ -51,6 +76,26 @@ public class SpecialsApiService
         public List<Special> Specials { get; set; } = new();
         [JsonPropertyName("version")]
         public string Version { get; set; } = string.Empty;
+        [JsonPropertyName("uptime")]
+        public int? Uptime { get; set; }
+        [JsonPropertyName("uptime_seconds")]
+        public int? UptimeSeconds { get; set; }
+
+        public int GetUptime() => Uptime ?? UptimeSeconds ?? 0;
+    }
+
+    private class StatusResponse
+    {
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("version")]
+        public string Version { get; set; } = string.Empty;
+        [JsonPropertyName("uptime")]
+        public int? Uptime { get; set; }
+        [JsonPropertyName("uptime_seconds")]
+        public int? UptimeSeconds { get; set; }
+
+        public int GetUptime() => Uptime ?? UptimeSeconds ?? 0;
     }
 
     /// <summary>
@@ -67,6 +112,49 @@ public class SpecialsApiService
         catch (Exception ex)
         {
             throw new Exception($"Failed to clear specials: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// GET /library - Retrieve the library of past specials from the server
+    /// </summary>
+    public async Task<List<Special>> GetLibraryAsync()
+    {
+        try
+        {
+            Log.Debug($"GetLibrary: GET {_baseUrl}/library");
+            ApiAuthService.ApplyTokenHeader(_httpClient);
+            var response = await _httpClient.GetAsync($"{_baseUrl}/library");
+            response.EnsureSuccessStatusCode();
+
+            var library = await response.Content.ReadFromJsonAsync<List<Special>>();
+            Log.Info($"GetLibrary: Retrieved {library?.Count ?? 0} specials from server library");
+            return library ?? new List<Special>();
+        }
+        catch (Exception ex)
+        {
+            Log.Exception(ex, "GetLibrary: FAILED");
+            throw new Exception($"Failed to retrieve library: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// DELETE /library - Clear the library of past specials on the server
+    /// </summary>
+    public async Task ClearLibraryAsync()
+    {
+        try
+        {
+            Log.Debug($"ClearLibrary: DELETE {_baseUrl}/library");
+            ApiAuthService.ApplyTokenHeader(_httpClient);
+            var response = await _httpClient.DeleteAsync($"{_baseUrl}/library");
+            response.EnsureSuccessStatusCode();
+            Log.Info("ClearLibrary: Server library cleared successfully");
+        }
+        catch (Exception ex)
+        {
+            Log.Exception(ex, "ClearLibrary: FAILED");
+            throw new Exception($"Failed to clear library: {ex.Message}", ex);
         }
     }
 
@@ -120,10 +208,39 @@ public class SpecialsApiService
     {
         try
         {
-            Log.Debug($"TestConnection: GET {_baseUrl}/specials");
+            Log.Debug($"TestConnection: GET {_baseUrl}/status");
             ApiAuthService.ApplyTokenHeader(_httpClient);
-            var response = await _httpClient.GetAsync($"{_baseUrl}/specials");
+            var response = await _httpClient.GetAsync($"{_baseUrl}/status");
             var success = response.IsSuccessStatusCode;
+
+            // Try to capture version and uptime if connection successful
+            if (success)
+            {
+                try
+                {
+                    var rawJson = await response.Content.ReadAsStringAsync();
+                    Log.Info($"TestConnection: Raw /status response: {rawJson}");
+
+                    var wrapper = System.Text.Json.JsonSerializer.Deserialize<StatusResponse>(rawJson);
+                    if (!string.IsNullOrEmpty(wrapper?.Version))
+                    {
+                        _lastServiceVersion = wrapper.Version;
+                        Log.Debug($"TestConnection: Captured service version: {_lastServiceVersion}");
+                    }
+
+                    var uptime = wrapper?.GetUptime() ?? 0;
+                    if (uptime > 0)
+                    {
+                        _lastServiceUptimeSeconds = uptime;
+                        Log.Debug($"TestConnection: Captured service uptime: {_lastServiceUptimeSeconds}s");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"TestConnection: Failed to parse response - {ex.Message}");
+                }
+            }
+
             Log.Debug($"TestConnection: Status={response.StatusCode}, Success={success}");
             return success;
         }
@@ -241,7 +358,7 @@ public class SpecialsApiService
                 Log.Warning($"API: SetOrientationAsync connection issue on attempt {attempt} - {ex.Message}, retrying after {retryDelayMs}ms...");
                 await Task.Delay(retryDelayMs);
             }
-            catch (TaskCanceledException ex) when (attempt < maxRetries)
+            catch (TaskCanceledException) when (attempt < maxRetries)
             {
                 Log.Warning($"API: SetOrientationAsync timeout on attempt {attempt}, retrying after {retryDelayMs}ms...");
                 await Task.Delay(retryDelayMs);

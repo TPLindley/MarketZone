@@ -116,17 +116,9 @@
                             Padding="12,8"
                             FontSize="12"/>
                         <Button 
-                            Text="Test"
-                            Command="{Binding TestAnimationCommand}"
-                            IsEnabled="{Binding IsConnected}"
-                            BackgroundColor="Purple"
-                            TextColor="White"
-                            Padding="12,8"
-                            FontSize="12"/>
-                        <Button 
-                            Text="Diag"
-                            Command="{Binding DiagnosticCommand}"
-                            BackgroundColor="Teal"
+                            Text="About"
+                            Command="{Binding AboutCommand}"
+                            BackgroundColor="DarkSlateBlue"
                             TextColor="White"
                             Padding="12,8"
                             FontSize="12"/>

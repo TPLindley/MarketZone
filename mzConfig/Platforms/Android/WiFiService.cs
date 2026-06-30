@@ -130,5 +130,30 @@ public partial class WiFiService : IWiFiService
             return false;
         }
     }
+
+    public async Task<string?> GetLocalIpAddressAsync()
+    {
+        try
+        {
+            var wifiManager = (WifiManager?)Android.App.Application.Context.GetSystemService(Context.WifiService);
+            if (wifiManager == null)
+                return null;
+
+            var connectionInfo = wifiManager.ConnectionInfo;
+            if (connectionInfo == null)
+                return null;
+
+            var ipAddress = connectionInfo.IpAddress;
+            if (ipAddress == 0)
+                return null;
+
+            // Convert int IP to readable format
+            return $"{(ipAddress & 0xff)}.{(ipAddress >> 8 & 0xff)}.{(ipAddress >> 16 & 0xff)}.{(ipAddress >> 24 & 0xff)}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 #endif

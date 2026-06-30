@@ -20,4 +20,10 @@ public interface IWiFiService
     /// Checks if WiFi is currently enabled
     /// </summary>
     Task<bool> IsWiFiEnabledAsync();
+
+    /// <summary>
+    /// Gets the local IP address of the device
+    /// </summary>
+    /// <returns>IP address or null if not available</returns>
+    Task<string?> GetLocalIpAddressAsync();
 }

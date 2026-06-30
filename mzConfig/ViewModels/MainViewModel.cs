@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows.Input;
+using MarketZone;
 using mzConfigure.Models;
 using mzConfigure.Services;
 
@@ -15,6 +16,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly IDialogService _dialogService;
     private readonly IWiFiService _wifiService;
     private readonly SpecialsLibraryService _libraryService;
+    private readonly ServiceHealthMonitor _healthMonitor;
     private string _status = "Ready";
     private bool _isLoading;
     private string _raspberryPiUrl;
@@ -22,7 +24,6 @@ public class MainViewModel : INotifyPropertyChanged
     private string _headerText = "Rolling Pin Bakery";
     private string _headerColor = "#FFFFFF";
     private bool _isPortrait;
-    private bool _isLoadingOrientation;
     private bool _showMoreOptions;
 
     public MainViewModel() : this(new DialogService(), new WiFiService())
@@ -36,6 +37,10 @@ public class MainViewModel : INotifyPropertyChanged
         _wifiService = wifiService;
         _apiService = new SpecialsApiService();
         _libraryService = new SpecialsLibraryService();
+
+        // Initialize health monitor
+        _healthMonitor = new ServiceHealthMonitor(_apiService);
+        _healthMonitor.PropertyChanged += OnHealthMonitorPropertyChanged;
 
         // Load saved URL from preferences
         _raspberryPiUrl = Preferences.Get("RaspberryPiUrl", "http://10.42.0.1:8765");
@@ -58,8 +63,7 @@ public class MainViewModel : INotifyPropertyChanged
         MoveUpCommand = new Command<Special>(MoveUp);
         MoveDownCommand = new Command<Special>(MoveDown);
         ToggleMoreOptionsCommand = new Command(ToggleMoreOptions);
-        TestAnimationCommand = new Command(async () => await TestAnimation());
-        DiagnosticCommand = new Command(async () => await ShowDiagnostics());
+        AboutCommand = new Command(async () => await ShowAboutDialog());
         ToggleOrientationCommand = new Command(async () => await ToggleOrientation());
 
         // Auto-connect and load on startup
@@ -69,6 +73,24 @@ public class MainViewModel : INotifyPropertyChanged
     private Page? GetCurrentPage()
     {
         return Application.Current?.Windows?.FirstOrDefault()?.Page;
+    }
+
+    private void OnHealthMonitorPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // Forward health monitor property changes to UI
+        if (e.PropertyName == nameof(ServiceHealthMonitor.ServiceUptimeSeconds))
+        {
+            OnPropertyChanged(nameof(ServiceUptimeSeconds));
+            OnPropertyChanged(nameof(ServiceUptimeText));
+        }
+        else if (e.PropertyName == nameof(ServiceHealthMonitor.ServiceUptimeText))
+        {
+            OnPropertyChanged(nameof(ServiceUptimeText));
+        }
+        else if (e.PropertyName == nameof(ServiceHealthMonitor.IsMonitoring))
+        {
+            OnPropertyChanged(nameof(IsHealthMonitoring));
+        }
     }
 
     private async Task InitializeAsync()
@@ -85,6 +107,11 @@ public class MainViewModel : INotifyPropertyChanged
             {
                 Status = "Connected. Loading specials...";
                 await LoadSpecials();
+
+                // Start health monitoring on initial connection
+                _healthMonitor.OnConnectionEstablished();
+                await _healthMonitor.StartMonitoringAsync();
+                Log.Info("Health monitoring started on initial connection");
             }
             else
             {
@@ -213,6 +240,16 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string ShowMoreButtonText => _showMoreOptions ? "▲" : "▼";
 
+    // Health Monitor Properties
+    public int ServiceUptimeSeconds => _healthMonitor.ServiceUptimeSeconds;
+    public string ServiceUptimeText => _healthMonitor.ServiceUptimeText;
+    public double HealthCheckIntervalMinutes
+    {
+        get => _healthMonitor.CheckIntervalMinutes;
+        set => _healthMonitor.CheckIntervalMinutes = value;
+    }
+    public bool IsHealthMonitoring => _healthMonitor.IsMonitoring;
+
     public Microsoft.Maui.Graphics.Color PageTitleColor
     {
         get
@@ -251,8 +288,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand MoveUpCommand { get; }
     public ICommand MoveDownCommand { get; }
     public ICommand ToggleMoreOptionsCommand { get; }
-    public ICommand TestAnimationCommand { get; }
-    public ICommand DiagnosticCommand { get; }
+    public ICommand AboutCommand { get; }
     public ICommand ToggleOrientationCommand { get; }
 
     private async Task LoadSpecials()
@@ -301,22 +337,18 @@ public class MainViewModel : INotifyPropertyChanged
                 try
                 {
                     var orientation = await _apiService.GetOrientationAsync();
-                    _isLoadingOrientation = true;
                     _isPortrait = orientation == "portrait";
                     OnPropertyChanged(nameof(IsPortrait));
                     OnPropertyChanged(nameof(OrientationText));
-                    _isLoadingOrientation = false;
                     Log.Info($"Orientation loaded - {orientation} (IsPortrait: {_isPortrait}, Button shows: {OrientationText})");
                 }
                 catch (Exception ex)
                 {
                     Log.Warning($"Failed to load orientation - {ex.Message}, defaulting to landscape");
                     // Default orientation is landscape if the endpoint is unavailable.
-                    _isLoadingOrientation = true;
                     _isPortrait = false;
                     OnPropertyChanged(nameof(IsPortrait));
                     OnPropertyChanged(nameof(OrientationText));
-                    _isLoadingOrientation = false;
                 }
             }
 
@@ -593,10 +625,11 @@ public class MainViewModel : INotifyPropertyChanged
             Specials.Clear();
             HeaderText = "Rolling Pin Bakery";
             HeaderColor = "#FFFFFF";
-            _isLoadingOrientation = true;
             IsPortrait = false;
-            _isLoadingOrientation = false;
-            Log.Info("Disconnected and cleared all data");
+
+            // Stop health monitoring on disconnect
+            await _healthMonitor.StopMonitoringAsync();
+            Log.Info("Disconnected and cleared all data, stopped health monitoring");
             return;
         }
 
@@ -637,8 +670,29 @@ public class MainViewModel : INotifyPropertyChanged
                     if (isConnected)
                     {
                         Log.Info("Connection successful, loading data from PI...");
+                        Status = "Connected. Loading library...";
+
+                        // Load library from server first
+                        try
+                        {
+                            var serverLibrary = await _apiService.GetLibraryAsync();
+                            await _libraryService.SyncLibraryFromServerAsync(serverLibrary);
+                            Log.Info($"Synced library from server: {serverLibrary.Count} items");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Exception(ex, "Failed to load library from server, continuing with local library");
+                            // Continue even if library sync fails - not critical
+                        }
+
                         Status = "Connected. Loading specials...";
                         await LoadSpecials();
+
+                        // Start health monitoring on successful connection (this is a NEW connection)
+                        _healthMonitor.OnConnectionEstablished();
+                        await _healthMonitor.StartMonitoringAsync();
+                        Log.Info("Health monitoring started on new connection");
+
                         Log.Separator("ShowConnectDialog: Connection complete");
                     }
                     else
@@ -803,11 +857,9 @@ public class MainViewModel : INotifyPropertyChanged
             Status = $"Error: {ex.Message}";
             await _dialogService.ShowAlertAsync("Error", ex.Message);
 
-            _isLoadingOrientation = true;
             _isPortrait = !_isPortrait;
             OnPropertyChanged(nameof(IsPortrait));
             OnPropertyChanged(nameof(OrientationText));
-            _isLoadingOrientation = false;
         }
         finally
         {
@@ -1159,6 +1211,32 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    // Public methods for AboutViewModel
+    public async Task ExecuteTestAnimation()
+    {
+        await TestAnimation();
+    }
+
+    public async Task ExecuteDiagnostics()
+    {
+        await ShowDiagnostics();
+    }
+
+    private async Task ShowAboutDialog()
+    {
+        try
+        {
+            var aboutViewModel = new AboutViewModel(this, _apiService, _healthMonitor, _wifiService);
+            var aboutPage = new Views.AboutPage(aboutViewModel);
+            await Application.Current!.MainPage!.Navigation.PushModalAsync(aboutPage);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception(ex, "Error showing about dialog");
+            await _dialogService.ShowAlertAsync("Error", "Failed to show about page");
+        }
+    }
+
     private async Task ShowDiagnostics()
     {
         Status = "Running diagnostics...";
@@ -1205,11 +1283,34 @@ public class MainViewModel : INotifyPropertyChanged
             }
 
             diagnosticInfo.AppendLine("\n=== APP STATUS ===");
+            diagnosticInfo.AppendLine($"App Version: {AppVersion.FullVersion}");
             diagnosticInfo.AppendLine($"Connection Status: {(_isConnected ? "Connected" : "Disconnected")}");
             diagnosticInfo.AppendLine($"Target URL: {_raspberryPiUrl}");
             diagnosticInfo.AppendLine($"Specials Count: {Specials.Count}");
             diagnosticInfo.AppendLine($"Header: {_headerText}");
             diagnosticInfo.AppendLine($"Orientation: {OrientationText}");
+
+            // Display service version and uptime
+            if (!string.IsNullOrEmpty(_apiService.LastServiceVersion))
+            {
+                diagnosticInfo.AppendLine($"Service Version: {_apiService.LastServiceVersion}");
+            }
+            if (_apiService.LastServiceUptimeSeconds > 0)
+            {
+                diagnosticInfo.AppendLine($"Service Uptime: {_healthMonitor.ServiceUptimeText}");
+            }
+
+            diagnosticInfo.AppendLine("\n=== SERVICE HEALTH MONITORING ===");
+            diagnosticInfo.AppendLine($"Monitoring Active: {(_healthMonitor.IsMonitoring ? "Yes" : "No")}");
+            diagnosticInfo.AppendLine($"Check Interval: {_healthMonitor.CheckIntervalMinutes:F1} minutes");
+            if (_healthMonitor.LastSuccessfulPing.HasValue)
+            {
+                diagnosticInfo.AppendLine($"Last Successful Ping: {_healthMonitor.LastSuccessfulPing.Value:HH:mm:ss}");
+            }
+            else
+            {
+                diagnosticInfo.AppendLine("Last Successful Ping: Never");
+            }
 
             // Extract host and port from URL
             var uri = new Uri(_raspberryPiUrl);
@@ -1234,8 +1335,7 @@ public class MainViewModel : INotifyPropertyChanged
                 diagnosticInfo.AppendLine("(Tests if the hostname can be resolved to an IP address)");
 
                 // Attempt to resolve DNS
-                string resolvedIp = null;
-                bool dnsFailed = false;
+                string? resolvedIp = null;
                 try
                 {
                     var addresses = await System.Net.Dns.GetHostAddressesAsync(host);
@@ -1248,7 +1348,6 @@ public class MainViewModel : INotifyPropertyChanged
                 }
                 catch (Exception ex)
                 {
-                    dnsFailed = true;
                     diagnosticInfo.AppendLine($"✗ DNS Resolution Failed: {ex.Message}");
                     diagnosticInfo.AppendLine($"  Cannot resolve hostname '{host}'");
                     diagnosticInfo.AppendLine($"  Check: Is the hostname correct? Is DNS working?");
@@ -1263,7 +1362,6 @@ public class MainViewModel : INotifyPropertyChanged
                 diagnosticInfo.AppendLine("\n=== ICMP PING TEST ===");
                 diagnosticInfo.AppendLine("(Tests if the host responds to ping packets)");
 
-                bool pingFailed = false;
                 if (resolvedIp != null)
                 {
                     try
@@ -1279,7 +1377,6 @@ public class MainViewModel : INotifyPropertyChanged
                         }
                         else
                         {
-                            pingFailed = true;
                             diagnosticInfo.AppendLine($"✗ Ping Failed: {pingReply.Status}");
                             diagnosticInfo.AppendLine($"  Host at {resolvedIp} did not respond to ping");
 
@@ -1307,7 +1404,6 @@ public class MainViewModel : INotifyPropertyChanged
                     }
                     catch (Exception ex)
                     {
-                        pingFailed = true;
                         diagnosticInfo.AppendLine($"✗ Ping Error: {ex.Message}");
                         diagnosticInfo.AppendLine($"  Note: Some networks/devices may block ICMP ping");
                         diagnosticInfo.AppendLine($"  Continuing to TCP test...");
@@ -1492,6 +1588,31 @@ public class MainViewModel : INotifyPropertyChanged
                 {
                     var canConnect = await _apiService.TestConnectionAsync();
                     diagnosticInfo.AppendLine($"API Test: {(canConnect ? "✓ Success" : "✗ Failed")}");
+
+                    if (canConnect)
+                    {
+                        // Display service version if available
+                        var serviceVersion = _apiService.LastServiceVersion;
+                        if (!string.IsNullOrEmpty(serviceVersion))
+                        {
+                            diagnosticInfo.AppendLine($"Service Version: {serviceVersion}");
+                        }
+                        else
+                        {
+                            diagnosticInfo.AppendLine("Service Version: Not available");
+                        }
+
+                        // Display service uptime if available
+                        var serviceUptime = _apiService.LastServiceUptimeSeconds;
+                        if (serviceUptime > 0)
+                        {
+                            diagnosticInfo.AppendLine($"Service Uptime: {_healthMonitor.ServiceUptimeText} ({serviceUptime}s)");
+                        }
+                        else
+                        {
+                            diagnosticInfo.AppendLine("Service Uptime: Not available");
+                        }
+                    }
 
                     if (!canConnect)
                     {

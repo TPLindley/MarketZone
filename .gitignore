@@ -7,6 +7,9 @@ obj/
 [Ll]og/
 [Ll]ogs/
 
+# Auto-generated version file
+Version.g.cs
+
 # .NET build artifacts
 *.dll
 *.exe

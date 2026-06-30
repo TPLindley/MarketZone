@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="mzConfigure.Views.AboutPage"
+             Title="About mzConfig"
+             BackgroundColor="#F5F5F5">
+
+    <ScrollView>
+        <Grid Padding="10" RowDefinitions="Auto,*" ColumnDefinitions="*" ColumnSpacing="10" RowSpacing="10" MinimumHeightRequest="500">
+
+            <!-- Header spans all columns -->
+            <Frame Grid.Row="0" Grid.Column="0" 
+                   BackgroundColor="#2C3E50" Padding="12" CornerRadius="8" HasShadow="True">
+                <HorizontalStackLayout Spacing="15" HorizontalOptions="Center">
+                    <Label Text="mzConfig" 
+                           FontSize="20" 
+                           FontAttributes="Bold" 
+                           TextColor="White"
+                           VerticalOptions="Center"/>
+                    <Label Text="{Binding AppVersionText}" 
+                           FontSize="11" 
+                           TextColor="#BDC3C7"
+                           VerticalOptions="Center"/>
+                    <Label Text="{Binding ConnectionStatusText}" 
+                           FontSize="11" 
+                           TextColor="{Binding ConnectionStatusColor}"
+                           VerticalOptions="Center"
+                           FontAttributes="Bold"/>
+                </HorizontalStackLayout>
+            </Frame>
+
+            <!-- Main Info Table -->
+            <Frame Grid.Row="1" Grid.Column="0" Padding="10" CornerRadius="8" HasShadow="True" WidthRequest="400" HorizontalOptions="Start" VerticalOptions="Fill" BackgroundColor="WhiteSmoke">
+                <VerticalStackLayout Spacing="10">
+                    <!-- Row 1: APPLICATION and DEVICE side by side -->
+                    <Grid ColumnDefinitions="195,195" ColumnSpacing="10">
+                        <!-- APPLICATION Section -->
+                        <VerticalStackLayout Grid.Column="0" Spacing="5">
+                            <Label Text="APPLICATION" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                            <Grid ColumnDefinitions="60,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="5" ColumnSpacing="5">
+                                <Label Grid.Row="0" Grid.Column="0" Text="Version:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="0" Grid.Column="1" Text="{Binding AppVersionText}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="1" Grid.Column="0" Text="Status:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="1" Grid.Column="1" Text="{Binding ConnectionStatusText}" 
+                                       TextColor="{Binding ConnectionStatusColor}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="2" Grid.Column="0" Text="Target:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="2" Grid.Column="1" Text="{Binding TargetUrl}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                            </Grid>
+                        </VerticalStackLayout>
+
+                        <!-- DEVICE Section -->
+                        <VerticalStackLayout Grid.Column="1" Spacing="5">
+                            <Label Text="DEVICE" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                            <Grid ColumnDefinitions="60,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="5" ColumnSpacing="5">
+                                <Label Grid.Row="0" Grid.Column="0" Text="Platform:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="0" Grid.Column="1" Text="{Binding DevicePlatform}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="1" Grid.Column="0" Text="Model:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="1" Grid.Column="1" Text="{Binding DeviceModel}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="2" Grid.Column="0" Text="OS:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="2" Grid.Column="1" Text="{Binding DeviceVersion}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="3" Grid.Column="0" Text="IP:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="3" Grid.Column="1" Text="{Binding DeviceIp}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- Divider -->
+                    <BoxView HeightRequest="1" Color="#E0E0E0" IsVisible="{Binding IsConnected}"/>
+
+                    <!-- Row 2: SERVICE and HEALTH MONITOR side by side (when connected) -->
+                    <Grid ColumnDefinitions="195,195" ColumnSpacing="10" IsVisible="{Binding IsConnected}">
+                        <!-- SERVICE Section -->
+                        <VerticalStackLayout Grid.Column="0" Spacing="5">
+                            <Label Text="SERVICE" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                            <Grid ColumnDefinitions="60,*" RowDefinitions="Auto,Auto" RowSpacing="5" ColumnSpacing="5">
+                                <Label Grid.Row="0" Grid.Column="0" Text="Version:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="0" Grid.Column="1" Text="{Binding ServiceVersion}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="1" Grid.Column="0" Text="Uptime:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="1" Grid.Column="1" Text="{Binding ServiceUptime}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                            </Grid>
+                        </VerticalStackLayout>
+
+                        <!-- HEALTH MONITOR Section -->
+                        <VerticalStackLayout Grid.Column="1" Spacing="5">
+                            <Label Text="HEALTH MONITOR" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                            <Grid ColumnDefinitions="60,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="5" ColumnSpacing="5">
+                                <Label Grid.Row="0" Grid.Column="0" Text="Status:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="0" Grid.Column="1" Text="{Binding MonitorStatus}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="1" Grid.Column="0" Text="Interval:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="1" Grid.Column="1" Text="{Binding MonitorInterval}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                                <Label Grid.Row="2" Grid.Column="0" Text="Last:" TextColor="#7F8C8D" FontSize="11"/>
+                                <Label Grid.Row="2" Grid.Column="1" Text="{Binding LastCheckTime}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- Divider -->
+                    <BoxView HeightRequest="1" Color="#E0E0E0" IsVisible="{Binding IsConnected}"/>
+
+                    <!-- CONTENT Section (when connected) -->
+                    <VerticalStackLayout Spacing="5" IsVisible="{Binding IsConnected}">
+                        <Label Text="CONTENT" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                        <Grid ColumnDefinitions="65,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="5" ColumnSpacing="10">
+                            <Label Grid.Row="0" Grid.Column="0" Text="Specials:" TextColor="#7F8C8D" FontSize="11"/>
+                            <Label Grid.Row="0" Grid.Column="1" Text="{Binding SpecialsCount}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                            <Label Grid.Row="1" Grid.Column="0" Text="Orient:" TextColor="#7F8C8D" FontSize="11"/>
+                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding OrientationText}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+
+                            <Label Grid.Row="2" Grid.Column="0" Text="Header:" TextColor="#7F8C8D" FontSize="11"/>
+                            <Label Grid.Row="2" Grid.Column="1" Text="{Binding HeaderText}" FontSize="11" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                        </Grid>
+                    </VerticalStackLayout>
+
+                    <!-- Divider -->
+                    <BoxView HeightRequest="1" Color="#E0E0E0"/>
+
+                    <!-- Action Buttons -->
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="ACTIONS" FontSize="12" FontAttributes="Bold" TextColor="#2C3E50" Margin="0,0,0,3"/>
+
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="Test Animation" 
+                                    Command="{Binding TestCommand}"
+                                    IsEnabled="{Binding IsConnected}"
+                                    BackgroundColor="#9B59B6"
+                                    TextColor="White"
+                                    CornerRadius="5"
+                                    HeightRequest="32"
+                                    FontSize="11"
+                                    Padding="10,0"/>
+
+                            <Button Text="Diagnostics" 
+                                    Command="{Binding DiagnosticsCommand}"
+                                    BackgroundColor="#16A085"
+                                    TextColor="White"
+                                    CornerRadius="5"
+                                    HeightRequest="32"
+                                    FontSize="11"
+                                    Padding="10,0"/>
+
+                            <Button Text="Clear Library" 
+                                    Command="{Binding ClearLibraryCommand}"
+                                    IsEnabled="{Binding IsConnected}"
+                                    BackgroundColor="#E74C3C"
+                                    TextColor="White"
+                                    CornerRadius="5"
+                                    HeightRequest="32"
+                                    FontSize="11"
+                                    Padding="10,0"/>
+                        </HorizontalStackLayout>
+
+                        <Button Text="Close" 
+                                Command="{Binding CloseCommand}"
+                                BackgroundColor="#95A5A6"
+                                TextColor="White"
+                                CornerRadius="5"
+                                HeightRequest="32"
+                                FontSize="11"
+                                Padding="10,0"
+                                HorizontalOptions="Start"/>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Frame>
+
+        </Grid>
+    </ScrollView>
+</ContentPage>

@@ -20,6 +20,24 @@ public partial class WiFiService : IWiFiService
     {
         return false;
     }
+
+    public async Task<string?> GetLocalIpAddressAsync()
+    {
+        try
+        {
+            var hostName = System.Net.Dns.GetHostName();
+            var addresses = await System.Net.Dns.GetHostAddressesAsync(hostName);
+            var ipv4Address = addresses.FirstOrDefault(a =>
+                a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                !System.Net.IPAddress.IsLoopback(a));
+
+            return ipv4Address?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 #else
 // Platform-specific implementations are in:

@@ -537,6 +537,7 @@ static void expand_for_scroll(Gtk::Box* box,
 // -----------------------------------------------------------------------
 static std::mutex          g_mutex;
 static std::vector<Special> g_specials;
+static std::chrono::steady_clock::time_point g_start_time = std::chrono::steady_clock::now();
 
 // GTK widget pointers set during main (only touched on GTK thread)
 static Gtk::Box*           g_content_box = nullptr;
@@ -943,6 +944,9 @@ static void schedule_scroll_evaluations(int count)
 static void set_json(httplib::Response& res, json obj)
 {
     obj["version"] = APP_VERSION;
+    auto now = std::chrono::steady_clock::now();
+    auto uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(now - g_start_time).count();
+    obj["uptime"] = uptime_sec;
     res.set_content(obj.dump(2), "application/json");
 }
 
@@ -966,6 +970,12 @@ static void run_api_server()
         res.status = 401;
         res.set_content(error_json("unauthorized"), "application/json");
         return httplib::Server::HandlerResponse::Handled;
+    });
+
+    // GET /status — lightweight health check
+    svr.Get("/status", [](const httplib::Request& req, httplib::Response& res) {
+        log("HTTP", "GET /status from " + req.remote_addr);
+        set_json(res, {{"status", "ok"}});
     });
 
     // GET /header — return current header text and color

@@ -82,5 +82,23 @@ public partial class WiFiService : IWiFiService
         var ssid = await GetCurrentSsidAsync();
         return !string.IsNullOrEmpty(ssid);
     }
+
+    public async Task<string?> GetLocalIpAddressAsync()
+    {
+        try
+        {
+            var hostName = System.Net.Dns.GetHostName();
+            var addresses = await System.Net.Dns.GetHostAddressesAsync(hostName);
+            var ipv4Address = addresses.FirstOrDefault(a =>
+                a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                !System.Net.IPAddress.IsLoopback(a));
+
+            return ipv4Address?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 #endif

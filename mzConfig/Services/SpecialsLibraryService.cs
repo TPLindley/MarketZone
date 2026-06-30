@@ -110,6 +110,24 @@ public class SpecialsLibraryService
     }
 
     /// <summary>
+    /// Replace the local library with specials from the server.
+    /// This is called when connecting to sync with the server's library.
+    /// </summary>
+    public async Task SyncLibraryFromServerAsync(List<Special> serverLibrary)
+    {
+        try
+        {
+            await SaveLibraryAsync(serverLibrary);
+            Log.Info($"SpecialsLibraryService: Synced library with {serverLibrary.Count} items from server");
+        }
+        catch (Exception ex)
+        {
+            Log.Exception(ex, "SpecialsLibraryService: Failed to sync library from server");
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Get the count of items in the library
     /// </summary>
     public async Task<int> GetLibraryCountAsync()
