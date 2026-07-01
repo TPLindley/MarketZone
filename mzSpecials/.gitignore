@@ -1,0 +1,6 @@
+# Build output
+build/
+
+# Auto-generated version files
+build_number.txt
+build/generated/version.h
